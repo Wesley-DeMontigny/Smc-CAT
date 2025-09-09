@@ -2,6 +2,7 @@
 #include <memory>
 #include <random>
 #include <cassert>
+#include <iostream>
 
 // Construct random tree with n tips and exponentially distributed branch lengths
 Tree::Tree(int n){
@@ -9,12 +10,16 @@ Tree::Tree(int n){
 
     auto generator = std::mt19937(std::random_device{}());
 
-    std::exponential_distribution<double> branchDist(0.5);
+    std::exponential_distribution<double> branchDist(2.0);
 
     root = std::shared_ptr<TreeNode>(new TreeNode {-1, "root", false, true, 0.0, nullptr, {}});
-    auto A = std::shared_ptr<TreeNode>(new TreeNode {0, "t1", true, false, branchDist(generator), root, {}});
-    auto B = std::shared_ptr<TreeNode>(new TreeNode {1, "t2", true, false, branchDist(generator), root, {}});
-    auto C = std::shared_ptr<TreeNode>(new TreeNode {2, "t3", true, false, branchDist(generator), root, {}});
+    auto A = std::shared_ptr<TreeNode>(new TreeNode {0, "t0", true, false, branchDist(generator), root, {}});
+    auto B = std::shared_ptr<TreeNode>(new TreeNode {1, "t1", true, false, branchDist(generator), root, {}});
+    auto C = std::shared_ptr<TreeNode>(new TreeNode {2, "t2", true, false, branchDist(generator), root, {}});
+    
+    root->descendants.insert(A);
+    root->descendants.insert(B);
+    root->descendants.insert(C);
 
     tips.push_back(A);
     tips.push_back(B);
@@ -25,14 +30,12 @@ Tree::Tree(int n){
         int randomIndex = dist(generator);
         auto randomTip = tips[randomIndex];
 
-        auto newTip = std::shared_ptr<TreeNode>(new TreeNode {i, "t" + std::to_string(i+1), true, false, branchDist(generator), nullptr, {}});
+        auto newInternal = std::shared_ptr<TreeNode>(new TreeNode {0, "", false, false, branchDist(generator), randomTip->ancestor, {}});
+        auto newTip = std::shared_ptr<TreeNode>(new TreeNode {i, "t" + std::to_string(i), true, false, branchDist(generator), newInternal, {}});
         tips.push_back(newTip);
-        auto newInternal = std::shared_ptr<TreeNode>(new TreeNode {0, "", false, false, branchDist(generator), nullptr, {}});
 
         // Set the new internal node to be connected to the old ancestor and branch off with the two new nodes
-        newInternal->ancestor = randomTip->ancestor;
         randomTip->ancestor = newInternal;
-        newTip->ancestor = newInternal;
         newInternal->descendants.insert(newTip);
         newInternal->descendants.insert(randomTip);
 
@@ -54,6 +57,70 @@ Tree::Tree(int n){
 // Construct from newick
 Tree::Tree(std::string s){
 
+    std::string nameTokens = "";
+    std::string branchTokens = "";
+    bool readingName = false;
+    bool readingBranch = false;
+    std::shared_ptr<TreeNode> currentNode = nullptr;
+    int counter = 0;
+
+    for(auto character : s){
+        if(character == '('){
+            if(currentNode == nullptr){
+                root = std::shared_ptr<TreeNode>(new TreeNode {-1, "root", false, true, 0.0, nullptr, {}});
+                currentNode = root;
+            }
+            else {
+                auto newInternal = std::shared_ptr<TreeNode>(new TreeNode {0, "", false, false, 0.0, currentNode, {}});
+                currentNode->descendants.insert(newInternal);
+                currentNode = newInternal;
+            }
+        }
+        else if(character == ':'){
+            readingBranch = true;
+            if(readingName){
+                auto newTip = std::shared_ptr<TreeNode>(new TreeNode {counter, nameTokens, true, false, 0.0, currentNode, {}});
+                currentNode->descendants.insert(newTip);
+                currentNode = newTip;
+                tips.push_back(newTip);
+
+                counter++;
+                nameTokens = "";
+                readingName = false;
+            }
+        }
+        else if(character == ')' || character == ','){
+            if(readingBranch){
+                currentNode->branchLength = std::stod(branchTokens);
+                branchTokens = "";
+                readingBranch = false;
+            }
+
+            currentNode = currentNode->ancestor;
+        }
+        else if(character == ';'){
+            break;
+        }
+        else {
+            if(readingBranch){
+                branchTokens += character;
+            }
+            else{
+                readingName = true;
+                nameTokens += character;
+            }
+        }
+    }
+
+    recursiveIDAssign(counter, root);
+
+    regeneratePostOrder();
+
+    for(auto node : postOrder){
+        if(node != root){
+            assert(node->branchLength > 0.0);
+        }
+    }
 }
 
 Tree::~Tree() {}

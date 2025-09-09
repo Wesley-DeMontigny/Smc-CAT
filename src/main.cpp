@@ -4,9 +4,11 @@
 #include "analysis/Tree.hpp"
 
 int main() {
-    Tree myTree(10);
-
-    std::cout << myTree.generateNewick() << std::endl;
+    Tree myTree(5);
+    std::string newick = myTree.generateNewick();
+    std::cout << newick << std::endl;
+    Tree newickTree(newick);
+    std::cout << newickTree.generateNewick() << std::endl;
 
     return 0;
 }
