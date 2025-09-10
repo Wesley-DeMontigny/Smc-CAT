@@ -2,8 +2,8 @@
 #include <eigen3/Eigen/Dense>
 
 namespace RateMatrices {
-    static Eigen::MatrixXd ConstructLG() {
-        Eigen::MatrixXd m{20, 20};
+    static Eigen::Matrix<double, 20, 20> ConstructLG() {
+        Eigen::Matrix<double, 20, 20> m;
         m( 0, 0) = 0.0000000; m( 0, 1) = 0.4250930; m( 0, 2) = 0.2768180; m( 0, 3) = 0.3951440; m( 0, 4) = 2.4890840;
         m( 0, 5) = 0.9698940; m( 0, 6) = 1.0385450; m( 0, 7) = 2.0660400; m( 0, 8) = 0.3588580; m( 0, 9) = 0.1498300;
         m( 0,10) = 0.3953370; m( 0,11) = 0.5365180; m( 0,12) = 1.1240350; m( 0,13) = 0.2537010; m( 0,14) = 1.1776510;
