@@ -4,8 +4,6 @@ project(FastCAT LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
-find_package(GTest REQUIRED)
-
 include_directories(${PROJECT_SOURCE_DIR})
 find_package (Eigen3 3.3 REQUIRED NO_MODULE)
 file(GLOB_RECURSE SOURCES "${PROJECT_SOURCE_DIR}/src/*.cpp")
@@ -18,14 +16,6 @@ target_link_libraries(fastcat_lib PUBLIC Eigen3::Eigen)
 
 add_executable(main src/main.cpp)
 target_link_libraries(main PRIVATE fastcat_lib)
-
-file(GLOB_RECURSE TEST_SOURCES "${PROJECT_SOURCE_DIR}/tests/*.cpp")
-add_executable(tests ${TEST_SOURCES})
-target_link_libraries(tests PRIVATE fastcat_lib GTest::gtest_main)
-
-include(GoogleTest)
-enable_testing()
-gtest_discover_tests(tests)
 
 target_compile_options(fastcat_lib PRIVATE -march=native -O3)
 #add_compile_definitions(TEST_RUN=1)
