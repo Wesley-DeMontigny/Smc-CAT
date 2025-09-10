@@ -2,7 +2,6 @@
 #include <memory>
 #include <random>
 #include <cassert>
-#include <iostream>
 
 // Construct random tree with n tips and exponentially distributed branch lengths
 Tree::Tree(int n){
