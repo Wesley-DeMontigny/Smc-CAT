@@ -2,6 +2,7 @@
 #include <memory>
 #include <random>
 #include <cassert>
+#include <algorithm>
 
 // Construct random tree with n tips and exponentially distributed branch lengths
 Tree::Tree(int n){
@@ -11,14 +12,19 @@ Tree::Tree(int n){
 
     std::exponential_distribution<double> branchDist(2.0);
 
-    root = std::shared_ptr<TreeNode>(new TreeNode {-1, "root", false, true, 0.0, nullptr, {}});
-    auto A = std::shared_ptr<TreeNode>(new TreeNode {0, "t0", true, false, branchDist(generator), root, {}});
-    auto B = std::shared_ptr<TreeNode>(new TreeNode {1, "t1", true, false, branchDist(generator), root, {}});
-    auto C = std::shared_ptr<TreeNode>(new TreeNode {2, "t2", true, false, branchDist(generator), root, {}});
+    root = std::shared_ptr<TreeNode>(new TreeNode {-1, "root", false, true, 0.0, nullptr, {}, false, false});
+    auto A = std::shared_ptr<TreeNode>(new TreeNode {0, "t0", true, false, branchDist(generator), root, {}, false, false});
+    auto B = std::shared_ptr<TreeNode>(new TreeNode {1, "t1", true, false, branchDist(generator), root, {}, false, false});
+    auto C = std::shared_ptr<TreeNode>(new TreeNode {2, "t2", true, false, branchDist(generator), root, {}, false, false});
     
     root->descendants.insert(A);
     root->descendants.insert(B);
     root->descendants.insert(C);
+    
+    nodes.push_back(root);
+    nodes.push_back(A);
+    nodes.push_back(B);
+    nodes.push_back(C);
 
     tips.push_back(A);
     tips.push_back(B);
@@ -29,9 +35,11 @@ Tree::Tree(int n){
         int randomIndex = dist(generator);
         auto randomTip = tips[randomIndex];
 
-        auto newInternal = std::shared_ptr<TreeNode>(new TreeNode {0, "", false, false, branchDist(generator), randomTip->ancestor, {}});
-        auto newTip = std::shared_ptr<TreeNode>(new TreeNode {i, "t" + std::to_string(i), true, false, branchDist(generator), newInternal, {}});
+        auto newInternal = std::shared_ptr<TreeNode>(new TreeNode {0, "", false, false, branchDist(generator), randomTip->ancestor, {}, false, false});
+        auto newTip = std::shared_ptr<TreeNode>(new TreeNode {i, "t" + std::to_string(i), true, false, branchDist(generator), newInternal, {}, false, false});
         tips.push_back(newTip);
+        nodes.push_back(newInternal);
+        nodes.push_back(newTip);
 
         // Set the new internal node to be connected to the old ancestor and branch off with the two new nodes
         randomTip->ancestor = newInternal;
@@ -50,11 +58,22 @@ Tree::Tree(int n){
     int counter = n;
     recursiveIDAssign(n, root);
 
+    // Sort so we can access nodes by their ID
+    std::sort(nodes.begin(), nodes.end(),
+        [](const std::shared_ptr<TreeNode>& a, const std::shared_ptr<TreeNode>& b) {
+            return a->id < b->id;
+        }
+    );
+
     regeneratePostOrder();
 }
 
 // Construct from newick
 Tree::Tree(std::string s){
+
+    auto generator = std::mt19937(std::random_device{}());
+
+    std::exponential_distribution<double> branchDist(2.0);
 
     std::string nameTokens = "";
     std::string branchTokens = "";
@@ -66,22 +85,25 @@ Tree::Tree(std::string s){
     for(auto character : s){
         if(character == '('){
             if(currentNode == nullptr){
-                root = std::shared_ptr<TreeNode>(new TreeNode {-1, "root", false, true, 0.0, nullptr, {}});
+                root = std::shared_ptr<TreeNode>(new TreeNode {-1, "root", false, true, 0.0, nullptr, {}, false, false});
                 currentNode = root;
+                nodes.push_back(root);
             }
             else {
-                auto newInternal = std::shared_ptr<TreeNode>(new TreeNode {0, "", false, false, 0.0, currentNode, {}});
+                auto newInternal = std::shared_ptr<TreeNode>(new TreeNode {0, "", false, false, 0.0, currentNode, {}, false, false});
                 currentNode->descendants.insert(newInternal);
+                nodes.push_back(newInternal);
                 currentNode = newInternal;
             }
         }
         else if(character == ':'){
             readingBranch = true;
             if(readingName){
-                auto newTip = std::shared_ptr<TreeNode>(new TreeNode {counter, nameTokens, true, false, 0.0, currentNode, {}});
+                auto newTip = std::shared_ptr<TreeNode>(new TreeNode {counter, nameTokens, true, false, 0.0, currentNode, {}, false, false});
                 currentNode->descendants.insert(newTip);
                 currentNode = newTip;
                 tips.push_back(newTip);
+                nodes.push_back(newTip);
 
                 counter++;
                 nameTokens = "";
@@ -113,12 +135,69 @@ Tree::Tree(std::string s){
 
     recursiveIDAssign(counter, root);
 
+    // Sort so we can access nodes by their ID
+    std::sort(nodes.begin(), nodes.end(),
+        [](const std::shared_ptr<TreeNode>& a, const std::shared_ptr<TreeNode>& b) {
+            return a->id < b->id;
+        }
+    );
+
     regeneratePostOrder();
 
     for(auto node : postOrder){
         if(node != root){
-            assert(node->branchLength > 0.0);
+            if(node->branchLength <= 0.0){
+                node->branchLength = branchDist(generator); // If we aren't provided a branch length make one up
+            }
         }
+    }
+}
+
+Tree::Tree(std::vector<std::string> tList){
+    *this = Tree(tList.size());
+    for(int i = 0; i < tips.size(); i++){
+        tips[i]->name = tList[i];
+    }
+}
+
+Tree::Tree(const Tree& t){
+    clone(t);
+}
+
+Tree& Tree::operator=(const Tree& t){
+    if(this == &t)
+        return *this;
+    
+    clone(t);
+    return *this;
+}
+
+void Tree::clone(const Tree& t){
+    assert(nodes.size() == t.nodes.size());
+
+    for(int i = 0; i < nodes.size(); i++){
+        auto p = nodes[i];
+        auto q = t.nodes[i];
+
+        p->id = q->id;
+        p->isRoot = q->id;
+        p->isTip = q->isTip;
+        p->name = q->name;
+        p->updateCL = q->updateCL;
+        p->updateTP = q->updateTP;
+        p->branchLength = q->branchLength;
+        p->descendants.clear();
+
+        for(auto n : q->descendants)
+            p->descendants.insert(nodes[n->id]);
+
+        p->ancestor = nodes[q->ancestor->id];
+    }
+
+    postOrder.clear();
+    for(int i = 0; i < nodes.size(); i++){
+        auto q = t.postOrder[i];
+        postOrder.push_back(nodes[q->id]);
     }
 }
 
@@ -182,4 +261,23 @@ std::string Tree::recursiveNewickGenerate(std::string s, std::shared_ptr<TreeNod
     }
 
     return s;
+}
+
+void Tree::updateAll(){
+    for(auto n : postOrder){
+        n->updateCL = true;
+        n->updateTP = true;
+    }
+}
+
+double Tree::localMove(double delta){
+
+}
+
+double Tree::scaleBranchMove(double delta){
+
+}
+
+double Tree::NNI(){
+
 }
