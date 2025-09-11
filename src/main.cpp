@@ -1,14 +1,12 @@
 #include <iostream>
 #include "core/Settings.hpp"
+#include "analysis/RateMatrices.hpp"
+#include "analysis/Model.hpp"
 #include "core/Alignment.hpp"
-#include "analysis/Tree.hpp"
 
 int main() {
-    Tree myTree(5);
-    std::string newick = myTree.generateNewick();
-    std::cout << newick << std::endl;
-    Tree newickTree(newick);
-    std::cout << newickTree.generateNewick() << std::endl;
-
+    Alignment aln("/workspaces/FastCAT/local_testing/globin_test.fasta");
+    Model m(aln);
+    
     return 0;
 }

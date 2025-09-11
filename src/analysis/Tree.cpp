@@ -56,7 +56,12 @@ Tree::Tree(int n){
 
     // Assign node ID to the non-tips
     int counter = n;
-    recursiveIDAssign(n, root);
+    for(auto node : nodes){
+        if(!node->isTip){
+            node->id = counter;
+            counter++;
+        }
+    }
 
     // Sort so we can access nodes by their ID
     std::sort(nodes.begin(), nodes.end(),
@@ -133,7 +138,12 @@ Tree::Tree(std::string s){
         }
     }
 
-    recursiveIDAssign(counter, root);
+    for(auto node : nodes){
+        if(!node->isTip){
+            node->id = counter;
+            counter++;
+        }
+    }
 
     // Sort so we can access nodes by their ID
     std::sort(nodes.begin(), nodes.end(),
@@ -153,18 +163,17 @@ Tree::Tree(std::string s){
     }
 }
 
-Tree::Tree(std::vector<std::string> tList){
-    *this = Tree(tList.size());
+Tree::Tree(std::vector<std::string> tList) : Tree(tList.size()){
     for(int i = 0; i < tips.size(); i++){
         tips[i]->name = tList[i];
     }
 }
 
-Tree::Tree(const Tree& t){
+Tree::Tree(const Tree& t) : Tree(t.tips.size()){
     clone(t);
 }
 
-Tree& Tree::operator=(const Tree& t){
+Tree& Tree::operator=(const Tree& t) {
     if(this == &t)
         return *this;
     
@@ -175,12 +184,14 @@ Tree& Tree::operator=(const Tree& t){
 void Tree::clone(const Tree& t){
     assert(nodes.size() == t.nodes.size());
 
+    root = nodes[t.root->id];
+
     for(int i = 0; i < nodes.size(); i++){
         auto p = nodes[i];
         auto q = t.nodes[i];
 
         p->id = q->id;
-        p->isRoot = q->id;
+        p->isRoot = q->isRoot;
         p->isTip = q->isTip;
         p->name = q->name;
         p->updateCL = q->updateCL;
@@ -191,7 +202,8 @@ void Tree::clone(const Tree& t){
         for(auto n : q->descendants)
             p->descendants.insert(nodes[n->id]);
 
-        p->ancestor = nodes[q->ancestor->id];
+        if(q->ancestor != nullptr)
+            p->ancestor = nodes[q->ancestor->id];
     }
 
     postOrder.clear();
@@ -217,19 +229,6 @@ void Tree::regeneratePostOrder(){
     postOrder.clear();
 
     recursivePostOrderAssign(root);
-}
-
-int Tree::recursiveIDAssign(int n, std::shared_ptr<TreeNode> p){
-    for(auto child : p->descendants) {
-        if(! p->isTip){
-            n = recursiveIDAssign(n, child);
-        }
-    }
-
-    p->id = n;
-    n++;
-
-    return n;
 }
 
 void Tree::recursivePostOrderAssign(std::shared_ptr<TreeNode> p){

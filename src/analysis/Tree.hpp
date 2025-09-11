@@ -39,8 +39,9 @@ class Tree {
         std::vector<std::shared_ptr<TreeNode>>& getPostOrder() {return postOrder;}
         std::vector<std::shared_ptr<TreeNode>>& getTips() {return tips;}
 
-        int getNumNodes() {return postOrder.size();}
-        int getNumTaxa() {return tips.size();}
+        const int getNumNodes() {return postOrder.size();}
+        const int getNumTaxa() {return tips.size();}
+        std::shared_ptr<TreeNode> getRoot() {return root;}
 
         double localMove(double delta);
         double scaleBranchMove(double delta);
@@ -57,7 +58,6 @@ class Tree {
         std::vector<std::shared_ptr<TreeNode>> nodes;
 
         void recursivePostOrderAssign(std::shared_ptr<TreeNode> p);
-        int recursiveIDAssign(int n, std::shared_ptr<TreeNode> p);
         std::string recursiveNewickGenerate(std::string s, std::shared_ptr<TreeNode> p);
 };
 

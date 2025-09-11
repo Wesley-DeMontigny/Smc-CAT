@@ -3,10 +3,9 @@
 #include <eigen3/Eigen/Dense>
 #include <memory>
 #include "TransitionProbabilityClass.hpp"
+#include "Tree.hpp"
 
 class Alignment;
-class Tree;
-
 
 /*
 
@@ -14,7 +13,7 @@ class Tree;
 class Model {
     public:
         Model(void)=delete;
-        Model(Tree& t, Alignment& a, Eigen::Matrix<double, 20, 20> bM);
+        Model(Alignment& aln);
 
         void refreshLikelihood();
 
@@ -24,19 +23,31 @@ class Model {
         void accept();
         void reject();
         
-        void updateAssignments(int numUpdates);
-        double updateStationary();
+        double treeMove();
+        double stationaryMove();
 
         void tune(); // Tune the proposal parameters
 
         int proposedStationary = 0;
         int acceptedStationary = 0;
+        int proposedLocal= 0;
+        int acceptedLocal = 0;
+        int proposedNNI = 0;
+        int acceptedNNI = 0;
+        int proposedBranchLength = 0;
+        int acceptedBranchLength = 0;
+        int proposedAssignments = 0;
+        int acceptedAssignments = 0;
 
+        double localDelta; // Delta for the LOCAL move
+        double scaleDelta; // Delta to scale an individual branch length
         double stationaryAlpha = 100.0; // Concentration parameter for dirichlet simplex proposals
         double stationaryOffset = 0.01; // Offset parameter for dirichlet simplex proposals
     private:
-        Tree& phylogeny;
-        Eigen::Matrix<double, 20, 20> baseMatrix;
+        Tree currentPhylogeny; // We need the phylogenies to be evaluated before the numNodes
+        Tree oldPhylogeny;
+        std::shared_ptr<Eigen::Matrix<double, 20, 20>> baseMatrix;
+
         int numChar;
         int numTaxa;
         int numNodes;
@@ -44,7 +55,11 @@ class Model {
         double currentLnLikelihood = 0.0;
         double oldLnLikelihood = 0.0;
 
-        int proposalID = -1;
+        bool updateLocal = false;
+        bool updateStationary = false;
+        bool updateNNI = false;
+        bool updateBranchLength = false;
+        bool updateAssignments = false;
 
         std::unique_ptr<uint8_t[]> currentConditionalLikelihoodFlags; // To stop us from having to swap the whole memory space, we just keep a working space flag for each node
         std::unique_ptr<uint8_t[]> oldConditionalLikelihoodFlags; // Swap back flags if rejected

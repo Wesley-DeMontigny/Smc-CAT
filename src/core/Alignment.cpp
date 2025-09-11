@@ -47,7 +47,9 @@ Alignment::Alignment(std::string path) : numChar(0), numTaxa(0) {
 
                     std::string name = "";
                     for(int i = 1; i < line.size(); i++){
-                        name += line[i];
+                        if(std::isprint(line[i])){
+                            name += line[i];
+                        }
                     }
                     taxaNames.push_back(name);
                     currentIndex++;
@@ -69,6 +71,7 @@ Alignment::Alignment(std::string path) : numChar(0), numTaxa(0) {
                 }
             }
         }
+        sequences.push_back(currentSequence); // Push final sequence (because we never detected another '>')
         file.close();
     }else{
         std::cerr << "Error: Unable to open alignment file!" << std::endl;
@@ -83,6 +86,11 @@ Alignment::Alignment(std::string path) : numChar(0), numTaxa(0) {
             std::cerr << "Error: Sequence 1 had length " << numChar << " but sequence " << i+1 << " had length" << current_length << std::endl;
             std::exit(1);
         }
+    }
+
+    if(taxaNames.size() != sequences.size()){
+        std::cerr << "Error: We detected " << taxaNames.size() << " taxa names, but found " << sequences.size() << " sequences!" << std::endl;
+        std::exit(1);
     }
 
     dataMatrix = std::unique_ptr<int[]>(new int[numChar * numTaxa]);
