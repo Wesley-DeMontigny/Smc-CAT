@@ -1,7 +1,7 @@
 #include "TransitionProbabilityClass.hpp"
 #include <eigen3/Eigen/Eigenvalues>
 
-TransitionProbabilityClass::TransitionProbabilityClass(int n, Eigen::Matrix<double, 20, 20>& bM) : baseMatrix(bM), updated(false) {
+TransitionProbabilityClass::TransitionProbabilityClass(int n, std::shared_ptr<Eigen::Matrix<double, 20, 20>> bM) : baseMatrix(bM), updated(false), stationaryPrior(0.0) {
     // Initialize a buffer of transition probabilities for each branch
     for(int i = 0; i < n; i++){
         transitionProbabilities.push_back(
@@ -12,7 +12,7 @@ TransitionProbabilityClass::TransitionProbabilityClass(int n, Eigen::Matrix<doub
 
 void TransitionProbabilityClass::recomputeEigens(){
     auto diagScaler = stationaryDistribution.asDiagonal();
-    Eigen::Matrix<double, 20, 20> scaledMatrix = diagScaler * baseMatrix;
+    Eigen::Matrix<double, 20, 20> scaledMatrix = diagScaler * (*baseMatrix);
 
     for(int i = 0; i < 20; i++){
         double rowSum = 0.0;
