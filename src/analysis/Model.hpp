@@ -30,8 +30,6 @@ class Model {
 
         int proposedStationary = 0;
         int acceptedStationary = 0;
-        int proposedLocal= 0;
-        int acceptedLocal = 0;
         int proposedNNI = 0;
         int acceptedNNI = 0;
         int proposedBranchLength = 0;
@@ -39,7 +37,6 @@ class Model {
         int proposedAssignments = 0;
         int acceptedAssignments = 0;
 
-        double localDelta; // Delta for the LOCAL move
         double scaleDelta; // Delta to scale an individual branch length
         double stationaryAlpha = 100.0; // Concentration parameter for dirichlet simplex proposals
         double stationaryOffset = 0.01; // Offset parameter for dirichlet simplex proposals
@@ -55,7 +52,6 @@ class Model {
         double currentLnLikelihood = 0.0;
         double oldLnLikelihood = 0.0;
 
-        bool updateLocal = false;
         bool updateStationary = false;
         bool updateNNI = false;
         bool updateBranchLength = false;

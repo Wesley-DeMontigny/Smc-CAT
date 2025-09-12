@@ -4,6 +4,7 @@
 #include <set>
 #include <vector>
 #include <memory>
+#include <random>
 
 /*
 
@@ -43,9 +44,8 @@ class Tree {
         const int getNumTaxa() {return tips.size();}
         std::shared_ptr<TreeNode> getRoot() {return root;}
 
-        double localMove(double delta);
-        double scaleBranchMove(double delta);
-        double NNI();
+        double scaleBranchMove(double delta, std::mt19937& gen);
+        double NNIMove(std::mt19937& gen);
 
         void updateAll();
     private:

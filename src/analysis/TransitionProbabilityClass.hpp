@@ -2,8 +2,10 @@
 #define TRANSITION_PROBABILITY_CLASS_HPP
 #include <eigen3/Eigen/Dense>
 #include <memory>
+#include <random>
 
 struct TransitionProbabilityClass {
+    TransitionProbabilityClass(int n, std::shared_ptr<Eigen::Matrix<double, 20, 20>> bM);
 
     std::vector<Eigen::Matrix<double, 20, 20>> transitionProbabilities; // Indexed by node
     Eigen::Matrix<std::complex<double>, 20, 20> eigenVectors;
@@ -15,10 +17,9 @@ struct TransitionProbabilityClass {
 
     void recomputeEigens();
     void recomputeTransitionProbs(int n, double t, double r);
+    double dirichletSimplexMove(double alpha, double offset, std::mt19937& gen);
 
     bool updated;
-
-    TransitionProbabilityClass(int n, std::shared_ptr<Eigen::Matrix<double, 20, 20>> bM);
 };
 
 #endif

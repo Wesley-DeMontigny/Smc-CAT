@@ -2,8 +2,13 @@
 #include "Tree.hpp"
 #include "core/Alignment.hpp"
 #include "RateMatrices.hpp"
-#include "core/ProbabilityFunctions.hpp"
 #include <random>
+
+double GammaLogPDF(double x, double shape, double rate){
+    if (x <= 0.0) return -INFINITY; 
+    return shape * std::log(rate) + (shape - 1.0) * std::log(x) - rate * x - std::lgamma(shape);
+}
+
 
 Model::Model(Alignment& aln) : 
                        numChar(aln.getNumChar()), currentPhylogeny(aln.getTaxaNames()),
@@ -66,7 +71,7 @@ Model::Model(Alignment& aln) :
 }
 
 void Model::accept(){
-    if(updateLocal || updateNNI || updateBranchLength){
+    if(updateNNI || updateBranchLength){
         oldPhylogeny = currentPhylogeny;
     }
 
@@ -84,17 +89,15 @@ void Model::accept(){
         conditionaLikelihoodBuffer[numChar*numNodes + i] = conditionaLikelihoodBuffer[i];
     }
     
-    if(updateLocal || updateBranchLength || updateStationary){
+    if(updateBranchLength || updateStationary){
         oldTransitionProbabilityClasses = currentTransitionProbabilityClasses;
     }
 
-    acceptedLocal += (int)updateLocal;
     acceptedNNI += (int)updateNNI;
     acceptedBranchLength += (int)updateBranchLength;
     acceptedStationary += (int)updateStationary;
     acceptedAssignments += (int)updateAssignments;
 
-    proposedLocal += (int)updateLocal;
     proposedNNI += (int)updateNNI;
     proposedBranchLength += (int)updateBranchLength;
     proposedStationary += (int)updateStationary;
@@ -108,7 +111,7 @@ void Model::accept(){
 }
 
 void Model::reject(){
-    if(updateLocal || updateNNI || updateBranchLength){
+    if(updateNNI || updateBranchLength){
         currentPhylogeny = oldPhylogeny;
     }
 
@@ -126,11 +129,10 @@ void Model::reject(){
         conditionaLikelihoodBuffer[i] = conditionaLikelihoodBuffer[numNodes*numChar + i];
     }
 
-    if(updateLocal || updateBranchLength || updateStationary){
+    if(updateBranchLength || updateStationary){
         currentTransitionProbabilityClasses = oldTransitionProbabilityClasses;
     }
 
-    proposedLocal += (int)updateLocal;
     proposedNNI += (int)updateNNI;
     proposedBranchLength += (int)updateBranchLength;
     proposedStationary += (int)updateStationary;
@@ -158,7 +160,7 @@ double Model::lnPrior(){
         lengthSum += n->branchLength;
     }
 
-    lnP += ProbabilityFunctions::GammaLogPDF(lengthSum, shape, rate);
+    lnP += GammaLogPDF(lengthSum, shape, rate);
 
     // For now we will assume flat priors on the stationary
 
@@ -180,7 +182,7 @@ void Model::refreshLikelihood(){
             }
         }
     }
-    else if(updateLocal || updateBranchLength){ // Update specific branch lengths if that was the last move
+    else if(updateBranchLength){ // Update specific branch lengths if that was the last move
         for(auto n : postOrder){
             if(n->updateTP){
                 n->updateTP = false;
@@ -267,13 +269,56 @@ void Model::refreshLikelihood(){
 }
 
 double Model::treeMove(){
+    auto generator = std::mt19937(std::random_device{}());
+    auto unifDist = std::uniform_real_distribution(0.0, 1.0);
+    double randMove = unifDist(generator);
 
+    double hastings = 0.0;
+
+    if(randMove < 0.5){ // NNI
+        hastings = currentPhylogeny.NNIMove(generator);
+        updateNNI = true;
+    }
+    else { // Branch Scale
+        hastings = currentPhylogeny.scaleBranchMove(scaleDelta, generator);
+        updateBranchLength = true;
+    }
+
+    return hastings;
 }
 
 double Model::stationaryMove(){
+    auto generator = std::mt19937(std::random_device{}());
+    auto unifDist = std::uniform_int_distribution<int>(0, currentTransitionProbabilityClasses.size() - 1);
+    double randCategory = unifDist(generator);
 
+    double hastings = currentTransitionProbabilityClasses[randCategory].dirichletSimplexMove(stationaryAlpha, stationaryOffset, generator);
+    updateStationary = true;
+
+    return hastings;
 }
 
 void Model::tune(){
-    
+    double blRate = (double)acceptedBranchLength/(double)proposedBranchLength;
+
+    if ( blRate > 0.33 ) {
+        scaleDelta *= (1.0 + ((blRate-0.33)/0.67));
+    }
+    else {
+        scaleDelta /= (2.0 - blRate/0.33);
+    }
+    acceptedBranchLength = 0;
+    proposedBranchLength = 0;
+
+    double stationaryRate = (double)acceptedStationary/(double)proposedStationary;
+
+    if ( stationaryRate > 0.33 ) {
+        stationaryAlpha /= (1.0 + ((stationaryRate-0.33)/0.67));
+    }
+    else {
+        stationaryAlpha *= (2.0 - stationaryRate/0.33);
+    }
+
+    acceptedStationary = 0;
+    proposedStationary = 0;
 }

@@ -1,6 +1,31 @@
 #include "TransitionProbabilityClass.hpp"
 #include <eigen3/Eigen/Eigenvalues>
-#include <random>
+
+Eigen::Vector<double, 20> sampleStationaryDist(Eigen::Vector<double, 20> alpha, std::mt19937& gen){
+    Eigen::Vector<double, 20> stationaryDistribution = Eigen::Vector<double, 20>::Zero();
+
+    double denom = 0.0;
+    for (size_t i = 0; i < 20; ++i) {
+        std::gamma_distribution<double> gammaDist(alpha[i], 1.0);
+        double randGamma = gammaDist(gen);
+        stationaryDistribution[i] = randGamma;
+        denom += randGamma;
+    }
+
+    return stationaryDistribution / denom;
+}
+
+double stationaryDirichletLogPDF(Eigen::Vector<double, 20> x, Eigen::Vector<double, 20> alpha){
+    double alpha0 = alpha.sum();
+
+    double lnPdf = -std::lgamma(alpha0);
+    for(int i = 0; i < 20; i++){
+        lnPdf += std::lgamma(alpha[i]);
+        lnPdf += x[i] * (alpha[i] - 1.0);
+    }
+
+    return lnPdf;
+}
 
 TransitionProbabilityClass::TransitionProbabilityClass(int n, std::shared_ptr<Eigen::Matrix<double, 20, 20>> bM) : baseMatrix(bM), updated(false) {
     // Initialize a buffer of transition probabilities for each branch
@@ -12,18 +37,9 @@ TransitionProbabilityClass::TransitionProbabilityClass(int n, std::shared_ptr<Ei
 
     transitionProbabilities.shrink_to_fit();
 
-    // Sample from a dirichlet
+    // Sample from a dirichlet with very mild centering
     auto generator = std::mt19937(std::random_device{}());
-
-    stationaryDistribution = Eigen::Vector<double, 20>::Zero();
-    double denom = 0.0;
-    for (size_t i = 0; i < 20; ++i) {
-        std::gamma_distribution<double> gammaDist(1.5, 1.0); // Set alpha to be 1.5 just to get a roughly centered initialization
-        double randGamma = gammaDist(generator);
-        stationaryDistribution[i] = randGamma;
-        denom += randGamma;
-    }
-    stationaryDistribution /= denom;
+    stationaryDistribution = sampleStationaryDist(Eigen::Vector<double, 20>::Ones() * 1.5, generator);
 }
 
 void TransitionProbabilityClass::recomputeEigens(){
@@ -56,4 +72,25 @@ void TransitionProbabilityClass::recomputeTransitionProbs(int n, double t, doubl
     auto transProb = (eigenVectors * diag * inverseEigenVectors).real().transpose(); // We transpose it so we can do A * v
 
     transitionProbabilities[n] = transProb;
+}
+
+double TransitionProbabilityClass::dirichletSimplexMove(double alpha, double offset, std::mt19937& gen){
+    Eigen::Vector<double, 20> concentrations = stationaryDistribution;
+    for(int i = 0; i < 20; i++){
+        concentrations[i] += offset;
+    }
+    concentrations *= alpha;
+
+    Eigen::Vector<double, 20> newStationaryDistribution = sampleStationaryDist(concentrations, gen);
+
+    Eigen::Vector<double, 20> revConcentrations = newStationaryDistribution;
+    for(int i = 0; i < 20; i++){
+        revConcentrations[i] += offset;
+    }
+    revConcentrations *= alpha;
+
+    double forward = stationaryDirichletLogPDF(stationaryDistribution, revConcentrations);
+    double backward = stationaryDirichletLogPDF(newStationaryDistribution, concentrations);
+
+    return forward - backward;
 }

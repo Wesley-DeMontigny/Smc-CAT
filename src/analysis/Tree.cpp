@@ -269,14 +269,85 @@ void Tree::updateAll(){
     }
 }
 
-double Tree::localMove(double delta){
+double Tree::scaleBranchMove(double delta, std::mt19937& gen){
+    std::uniform_real_distribution unifDist(0.0, 1.0);
 
+    std::shared_ptr<TreeNode> p = nullptr;
+    do{
+        p = nodes[(int)(unifDist(gen) * nodes.size())];
+    }
+    while(p == root);
+
+    double currentV = p->branchLength;
+    double scale = std::exp(delta * (unifDist(gen) - 0.5));
+    double newV = currentV * scale;
+    p->branchLength = newV;
+    p->updateTP = true;
+
+    std::shared_ptr<TreeNode> q = p;
+    do{
+        q->updateCL = true;
+        q = q->ancestor;
+    } 
+    while(q != root);
+    root->updateCL = true;
+
+    return std::log(scale);
 }
 
-double Tree::scaleBranchMove(double delta){
+std::shared_ptr<TreeNode> chooseNodeFromSet(const std::set<std::shared_ptr<TreeNode>>& s, std::mt19937& gen){
+    std::uniform_int_distribution<> dist(0, s.size() - 1);
 
+    int index = dist(gen);
+
+    auto it = s.begin();
+    std::advance(it, index);
+
+    return *it;
 }
 
-double Tree::NNI(){
+double Tree::NNIMove(std::mt19937& gen){
+    std::uniform_real_distribution unifDist(0.0, 1.0);
 
+    std::shared_ptr<TreeNode> p = nullptr;
+    do{
+        p = nodes[(int)(unifDist(gen) * nodes.size())];
+    }
+    while(p == root || p->isTip);
+
+    std::shared_ptr<TreeNode> a = p->ancestor;
+
+    std::set<std::shared_ptr<TreeNode>> neighbors1 = p->descendants;
+    std::shared_ptr<TreeNode> n1 = chooseNodeFromSet(neighbors1, gen);
+
+    // We exclude
+    std::set<std::shared_ptr<TreeNode>> neighbors2 = a->descendants;
+    neighbors2.erase(p);
+    std::shared_ptr<TreeNode> n2 = chooseNodeFromSet(neighbors2, gen);
+
+    n1->ancestor = a;
+    n2->ancestor = p;
+    a->descendants.insert(n1);
+    p->descendants.insert(n2);
+    
+    auto it = p->descendants.find(n1);
+    if (it != p->descendants.end()) {
+        p->descendants.erase(it);
+    }
+    auto it2 = a->descendants.find(n2);
+    if (it2 != a->descendants.end()) {
+        a->descendants.erase(it2);
+    }
+
+    std::shared_ptr<TreeNode> q = p;
+    do{
+        q->updateCL = true;
+        q = q->ancestor;
+    }
+    while(q != root);
+    root->updateCL = true;
+
+    regeneratePostOrder();
+
+    return 0.0;
 }
