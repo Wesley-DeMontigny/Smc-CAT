@@ -92,5 +92,7 @@ double TransitionProbabilityClass::dirichletSimplexMove(double alpha, double off
     double forward = stationaryDirichletLogPDF(stationaryDistribution, revConcentrations);
     double backward = stationaryDirichletLogPDF(newStationaryDistribution, concentrations);
 
+    updated = true;
+
     return forward - backward;
 }

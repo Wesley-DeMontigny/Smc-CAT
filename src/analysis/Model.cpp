@@ -3,6 +3,7 @@
 #include "core/Alignment.hpp"
 #include "RateMatrices.hpp"
 #include <random>
+#include <iostream>
 
 double GammaLogPDF(double x, double shape, double rate){
     if (x <= 0.0) return -INFINITY; 
@@ -17,9 +18,9 @@ Model::Model(Alignment& aln) :
     // We can make this configurable later
     baseMatrix = std::shared_ptr<Eigen::Matrix<double, 20, 20>>(new Eigen::Matrix<double, 20, 20>(RateMatrices::ConstructLG()));
 
-    currentConditionalLikelihoodFlags = std::unique_ptr<uint8_t[]>(new uint8_t[numNodes * numChar]);
-    oldConditionalLikelihoodFlags = std::unique_ptr<uint8_t[]>(new uint8_t[numNodes * numChar]);
-    for(int i = 0; i < numChar; i++){
+    currentConditionalLikelihoodFlags = std::unique_ptr<uint8_t[]>(new uint8_t[numNodes]);
+    oldConditionalLikelihoodFlags = std::unique_ptr<uint8_t[]>(new uint8_t[numNodes]);
+    for(int i = 0; i < numNodes; i++){
         currentConditionalLikelihoodFlags[i] = 0;
         oldConditionalLikelihoodFlags[i] = 0;
     }
@@ -53,8 +54,6 @@ Model::Model(Alignment& aln) :
         }
     }
 
-    currentPhylogeny.updateAll();
-
     currentTransitionProbabilityClasses.push_back(TransitionProbabilityClass(numChar, baseMatrix));
 
     for(auto& c : currentTransitionProbabilityClasses){
@@ -64,30 +63,49 @@ Model::Model(Alignment& aln) :
         }
     }
 
+    currentPhylogeny.updateAll();
+    refreshLikelihood();
+
+    oldPhylogeny = currentPhylogeny;
+
+    std::copy(rescaleBuffer.get(),
+        rescaleBuffer.get() + numChar * numNodes,
+        rescaleBuffer.get() + numChar * numNodes
+    );
+
+    std::copy(currentConditionalLikelihoodFlags.get(),
+        currentConditionalLikelihoodFlags.get() + numNodes,
+        oldConditionalLikelihoodFlags.get()
+    );
+    
     oldTransitionProbabilityClasses = currentTransitionProbabilityClasses;
 
-    refreshLikelihood();
-    accept();
+    oldLnLikelihood = currentLnLikelihood;
 }
 
 void Model::accept(){
+    oldLnLikelihood = currentLnLikelihood;
+
     if(updateNNI || updateBranchLength){
         oldPhylogeny = currentPhylogeny;
     }
 
     if(updateAssignments){
-    std::copy(currentClassAssignments.get(),
-        currentClassAssignments.get() + numChar,
-        oldClassAssignments.get());
+        std::copy(currentClassAssignments.get(),
+            currentClassAssignments.get() + numChar,
+            oldClassAssignments.get()
+        );
     }
 
     std::copy(rescaleBuffer.get(), 
-            rescaleBuffer.get() + numChar * numNodes,
-        rescaleBuffer.get() + numChar * numNodes);
+        rescaleBuffer.get() + numChar * numNodes,
+        rescaleBuffer.get() + numChar * numNodes
+    );
 
-    for(int i = 0; i < numChar * numNodes; i++){
-        conditionaLikelihoodBuffer[numChar*numNodes + i] = conditionaLikelihoodBuffer[i];
-    }
+    std::copy(currentConditionalLikelihoodFlags.get(), 
+        currentConditionalLikelihoodFlags.get() + numNodes,
+        oldConditionalLikelihoodFlags.get()
+    );
     
     if(updateBranchLength || updateStationary){
         oldTransitionProbabilityClasses = currentTransitionProbabilityClasses;
@@ -103,14 +121,15 @@ void Model::accept(){
     proposedStationary += (int)updateStationary;
     proposedAssignments += (int)updateAssignments;
 
-    bool updateLocal = false;
-    bool updateStationary = false;
-    bool updateNNI = false;
-    bool updateBranchLength = false;
-    bool updateAssignments = false;
+    updateStationary = false;
+    updateNNI = false;
+    updateBranchLength = false;
+    updateAssignments = false;
 }
 
 void Model::reject(){
+    currentLnLikelihood = oldLnLikelihood;
+
     if(updateNNI || updateBranchLength){
         currentPhylogeny = oldPhylogeny;
     }
@@ -118,16 +137,19 @@ void Model::reject(){
     if(updateAssignments){
         std::copy(oldClassAssignments.get(),
             oldClassAssignments.get() + numChar,
-            currentClassAssignments.get());
+            currentClassAssignments.get()
+        );
     }
 
     std::copy(rescaleBuffer.get() + numChar * numNodes,
         rescaleBuffer.get() + 2 * numChar * numNodes,
-        rescaleBuffer.get());
+        rescaleBuffer.get()
+    );
 
-    for(int i = 0; i < numChar * numNodes; i++){
-        conditionaLikelihoodBuffer[i] = conditionaLikelihoodBuffer[numNodes*numChar + i];
-    }
+    std::copy(oldConditionalLikelihoodFlags.get(), 
+        oldConditionalLikelihoodFlags.get() + numNodes,
+        currentConditionalLikelihoodFlags.get()
+    );
 
     if(updateBranchLength || updateStationary){
         currentTransitionProbabilityClasses = oldTransitionProbabilityClasses;
@@ -138,11 +160,10 @@ void Model::reject(){
     proposedStationary += (int)updateStationary;
     proposedAssignments += (int)updateAssignments;
 
-    bool updateLocal = false;
-    bool updateStationary = false;
-    bool updateNNI = false;
-    bool updateBranchLength = false;
-    bool updateAssignments = false;
+    updateStationary = false;
+    updateNNI = false;
+    updateBranchLength = false;
+    updateAssignments = false;
 }
 
 double Model::lnLikelihood(){
@@ -179,6 +200,7 @@ void Model::refreshLikelihood(){
                     n->updateTP = false;
                     c.recomputeTransitionProbs(n->id, n->branchLength, 1.0);
                 }
+                c.updated = false;
             }
         }
     }
@@ -186,7 +208,7 @@ void Model::refreshLikelihood(){
         for(auto n : postOrder){
             if(n->updateTP){
                 n->updateTP = false;
-                for(auto c : currentTransitionProbabilityClasses){
+                for(auto& c : currentTransitionProbabilityClasses){
                     c.recomputeTransitionProbs(n->id, n->branchLength, 1.0);
                 }
             }
@@ -196,7 +218,7 @@ void Model::refreshLikelihood(){
     // Change the working space for everything that will need a CL update
     for(auto n : postOrder){
         if(n->updateCL){
-            currentConditionalLikelihoodFlags[n->id] = (currentConditionalLikelihoodFlags[n->id] * -1) + 1;
+            currentConditionalLikelihoodFlags[n->id] ^= 1;
         }
     }
 
@@ -217,8 +239,13 @@ void Model::refreshLikelihood(){
                 auto pN = pNN;
                 auto pD = conditionaLikelihoodBuffer.get() + dIndex * numChar + (dWorkingSpace * numNodes * numChar);
 
+                std::vector<Eigen::Matrix<double, 20, 20>> pMatrices;
+                for(auto& c : currentTransitionProbabilityClasses){
+                    pMatrices.push_back(c.transitionProbabilities[dIndex]);
+                }
+
                 for(int c = 0; c < numChar; c++){
-                    Eigen::Matrix<double, 20, 20> P = currentTransitionProbabilityClasses[currentClassAssignments[c]].transitionProbabilities[dIndex];
+                    Eigen::Matrix<double, 20, 20>& P = pMatrices[currentClassAssignments[c]];
                     *pN = (*pN).array() * (P * (*pD)).array();
                     pD++;
                     pN++;
@@ -228,14 +255,10 @@ void Model::refreshLikelihood(){
             std::fill(rescalePointer, rescalePointer + numChar, 0.0);
 
             for(int c = 0; c < numChar; c++){
-                auto vec = *pNN;
-                double max = -INFINITY;
-                for(int i = 0; i < 20; i++){
-                    if(vec[i] > max)
-                        max = vec[i];
-                }
-                vec /= max;
+                double max = pNN->maxCoeff();
+                *pNN /= max;
                 *rescalePointer = std::log(max);
+
                 rescalePointer++;
                 pNN++;
             }
@@ -275,7 +298,7 @@ double Model::treeMove(){
 
     double hastings = 0.0;
 
-    if(randMove < 0.5){ // NNI
+    if(randMove < 0.25){ // NNI
         hastings = currentPhylogeny.NNIMove(generator);
         updateNNI = true;
     }
@@ -294,6 +317,7 @@ double Model::stationaryMove(){
 
     double hastings = currentTransitionProbabilityClasses[randCategory].dirichletSimplexMove(stationaryAlpha, stationaryOffset, generator);
     updateStationary = true;
+    currentPhylogeny.updateAll();
 
     return hastings;
 }
