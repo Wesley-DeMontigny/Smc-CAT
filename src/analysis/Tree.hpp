@@ -45,6 +45,7 @@ class Tree {
         std::shared_ptr<TreeNode> getRoot() {return root;}
 
         double scaleBranchMove(double delta, std::mt19937& gen);
+        double scaleSubtreeMove(double delta, std::mt19937& gen);
         double NNIMove(std::mt19937& gen);
 
         void updateAll();

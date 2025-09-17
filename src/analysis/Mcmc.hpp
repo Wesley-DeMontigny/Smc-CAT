@@ -15,7 +15,7 @@ class Mcmc {
         Mcmc(void)=delete;
         Mcmc(Alignment& aln, Model& m);
 
-        void burnin(int iterations);
+        void burnin(int iterations, int tuneFrequency, int printFrequency);
         void run(int iterations);
     private:
         Alignment& alignment;

@@ -23,11 +23,15 @@ class Model {
         void accept();
         void reject();
         
-        double treeMove();
+        double topologyMove();
+        double branchMove();
         double stationaryMove();
 
         void tune(); // Tune the proposal parameters
 
+        std::string getNewick() {return currentPhylogeny.generateNewick();}
+
+        // Variables to keep track of acceptance rates so we can tune and track performance
         int proposedStationary = 0;
         int acceptedStationary = 0;
         int proposedNNI = 0;
@@ -37,13 +41,12 @@ class Model {
         int proposedAssignments = 0;
         int acceptedAssignments = 0;
 
-        double scaleDelta; // Delta to scale an individual branch length
-        double stationaryAlpha = 100.0; // Concentration parameter for dirichlet simplex proposals
-        double stationaryOffset = 0.01; // Offset parameter for dirichlet simplex proposals
+        double scaleDelta = 1.0; // Delta to scale an individual branch length
+        double stationaryAlpha = 500.0; // Concentration parameter for dirichlet simplex proposals
     private:
         Tree currentPhylogeny; // We need the phylogenies to be evaluated before the numNodes
         Tree oldPhylogeny;
-        std::shared_ptr<Eigen::Matrix<double, 20, 20>> baseMatrix;
+        std::unique_ptr<Eigen::Matrix<double, 20, 20>> baseMatrix;
 
         int numChar;
         int numTaxa;

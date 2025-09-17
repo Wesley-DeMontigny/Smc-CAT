@@ -16,7 +16,7 @@ Model::Model(Alignment& aln) :
                        oldPhylogeny(currentPhylogeny), numNodes(currentPhylogeny.getNumNodes()), numTaxa(aln.getNumTaxa()) {
 
     // We can make this configurable later
-    baseMatrix = std::shared_ptr<Eigen::Matrix<double, 20, 20>>(new Eigen::Matrix<double, 20, 20>(RateMatrices::ConstructLG()));
+    baseMatrix = std::unique_ptr<Eigen::Matrix<double, 20, 20>>(new Eigen::Matrix<double, 20, 20>(RateMatrices::ConstructLG()));
 
     currentConditionalLikelihoodFlags = std::unique_ptr<uint8_t[]>(new uint8_t[numNodes]);
     oldConditionalLikelihoodFlags = std::unique_ptr<uint8_t[]>(new uint8_t[numNodes]);
@@ -54,7 +54,7 @@ Model::Model(Alignment& aln) :
         }
     }
 
-    currentTransitionProbabilityClasses.push_back(TransitionProbabilityClass(numChar, baseMatrix));
+    currentTransitionProbabilityClasses.push_back(TransitionProbabilityClass(numChar, baseMatrix.get()));
 
     for(auto& c : currentTransitionProbabilityClasses){
         c.recomputeEigens();
@@ -291,21 +291,20 @@ void Model::refreshLikelihood(){
     currentLnLikelihood = lnL;
 }
 
-double Model::treeMove(){
+double Model::topologyMove(){
     auto generator = std::mt19937(std::random_device{}());
-    auto unifDist = std::uniform_real_distribution(0.0, 1.0);
-    double randMove = unifDist(generator);
 
-    double hastings = 0.0;
+    double hastings = currentPhylogeny.NNIMove(generator);
+    updateNNI = true;
 
-    if(randMove < 0.25){ // NNI
-        hastings = currentPhylogeny.NNIMove(generator);
-        updateNNI = true;
-    }
-    else { // Branch Scale
-        hastings = currentPhylogeny.scaleBranchMove(scaleDelta, generator);
-        updateBranchLength = true;
-    }
+    return hastings;
+}
+
+double Model::branchMove(){
+    auto generator = std::mt19937(std::random_device{}());
+
+    double hastings = currentPhylogeny.scaleBranchMove(scaleDelta, generator);
+    updateBranchLength = true;
 
     return hastings;
 }
@@ -315,7 +314,7 @@ double Model::stationaryMove(){
     auto unifDist = std::uniform_int_distribution<int>(0, currentTransitionProbabilityClasses.size() - 1);
     double randCategory = unifDist(generator);
 
-    double hastings = currentTransitionProbabilityClasses[randCategory].dirichletSimplexMove(stationaryAlpha, stationaryOffset, generator);
+    double hastings = currentTransitionProbabilityClasses[randCategory].dirichletSimplexMove(stationaryAlpha, generator);
     updateStationary = true;
     currentPhylogeny.updateAll();
 
@@ -323,26 +322,30 @@ double Model::stationaryMove(){
 }
 
 void Model::tune(){
-    double blRate = (double)acceptedBranchLength/(double)proposedBranchLength;
+    if(proposedBranchLength > 0){
+        double blRate = (double)acceptedBranchLength/(double)proposedBranchLength;
 
-    if ( blRate > 0.33 ) {
-        scaleDelta *= (1.0 + ((blRate-0.33)/0.67));
-    }
-    else {
-        scaleDelta /= (2.0 - blRate/0.33);
-    }
-    acceptedBranchLength = 0;
-    proposedBranchLength = 0;
-
-    double stationaryRate = (double)acceptedStationary/(double)proposedStationary;
-
-    if ( stationaryRate > 0.33 ) {
-        stationaryAlpha /= (1.0 + ((stationaryRate-0.33)/0.67));
-    }
-    else {
-        stationaryAlpha *= (2.0 - stationaryRate/0.33);
+        if ( blRate > 0.33 ) {
+            scaleDelta *= (1.0 + ((blRate-0.33)/0.67));
+        }
+        else {
+            scaleDelta /= (2.0 - blRate/0.33);
+        }
+        acceptedBranchLength = 0;
+        proposedBranchLength = 0;
     }
 
-    acceptedStationary = 0;
-    proposedStationary = 0;
+    if(proposedStationary > 0){
+        double stationaryRate = (double)acceptedStationary/(double)proposedStationary;
+
+        if ( stationaryRate > 0.33 ) {
+            stationaryAlpha /= (1.0 + ((stationaryRate-0.33)/0.67));
+        }
+        else {
+            stationaryAlpha *= (2.0 - stationaryRate/0.33);
+        }
+
+        acceptedStationary = 0;
+        proposedStationary = 0;
+    }
 }

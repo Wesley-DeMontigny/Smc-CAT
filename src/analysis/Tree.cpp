@@ -10,7 +10,7 @@ Tree::Tree(int n){
 
     auto generator = std::mt19937(std::random_device{}());
 
-    std::exponential_distribution<double> branchDist(2.0);
+    std::exponential_distribution<double> branchDist(10.0);
 
     root = std::shared_ptr<TreeNode>(new TreeNode {-1, "root", false, true, 0.0, nullptr, {}, false, false});
     auto A = std::shared_ptr<TreeNode>(new TreeNode {0, "t0", true, false, branchDist(generator), root, {}, false, false});
@@ -277,6 +277,34 @@ double Tree::scaleBranchMove(double delta, std::mt19937& gen){
         p = nodes[(int)(unifDist(gen) * nodes.size())];
     }
     while(p == root);
+
+    double currentV = p->branchLength;
+    double scale = std::exp(delta * (unifDist(gen) - 0.5));
+    double newV = currentV * scale;
+    p->branchLength = newV;
+    p->updateTP = true;
+
+    std::shared_ptr<TreeNode> q = p;
+    do{
+        q->updateCL = true;
+        q = q->ancestor;
+    } 
+    while(q != root);
+    root->updateCL = true;
+
+    return std::log(scale);
+}
+
+int scaleSubtreeRecurse(std::shared_ptr<TreeNode> n, double val){
+    for(auto children : n->descendants){
+        scaleSubtreeRecurse(children, val);
+    }
+}
+
+double Tree::scaleSubtreeMove(double delta, std::mt19937& gen){
+    std::uniform_real_distribution unifDist(0.0, 1.0);
+
+    std::shared_ptr<TreeNode> p = nodes[(int)(unifDist(gen) * nodes.size())];
 
     double currentV = p->branchLength;
     double scale = std::exp(delta * (unifDist(gen) - 0.5));
