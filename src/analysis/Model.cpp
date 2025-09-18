@@ -4,6 +4,7 @@
 #include "RateMatrices.hpp"
 #include <random>
 #include <iostream>
+#include <cmath>
 
 double GammaLogPDF(double x, double shape, double rate){
     if (x <= 0.0) return -INFINITY; 
@@ -23,13 +24,6 @@ Model::Model(Alignment& aln) :
     for(int i = 0; i < numNodes; i++){
         currentConditionalLikelihoodFlags[i] = 0;
         oldConditionalLikelihoodFlags[i] = 0;
-    }
-
-    currentClassAssignments = std::unique_ptr<int[]>(new int[numChar]);
-    oldClassAssignments = std::unique_ptr<int[]>(new int[numChar]);
-    for(int i = 0; i < numChar; i++){
-        currentClassAssignments[i] = 0;
-        oldClassAssignments[i] = 0;
     }
 
     conditionaLikelihoodBuffer = std::unique_ptr<Eigen::Vector<double, 20>[]>(new Eigen::Vector<double, 20>[numChar * numNodes * 2]);
@@ -54,7 +48,32 @@ Model::Model(Alignment& aln) :
         }
     }
 
-    currentTransitionProbabilityClasses.push_back(TransitionProbabilityClass(numChar, baseMatrix.get()));
+    auto generator = std::mt19937(std::random_device{}());
+    std::uniform_real_distribution unifDist(0.0, 1.0);
+    
+    // Initialize the Chinese Restaurant Process
+    for(int i = 0; i < numChar; i++){
+        double randomVal = unifDist(generator);
+        double total = dppAlpha/(i + dppAlpha);
+
+        // If new category
+        if(total > randomVal){
+            auto newCat = TransitionProbabilityClass(numNodes, baseMatrix.get());
+            newCat.members.insert(i);
+            currentTransitionProbabilityClasses.push_back(newCat);
+            continue;
+        }
+
+        // If old category
+        for(auto &c : currentTransitionProbabilityClasses){
+            total += c.members.size()/(i+dppAlpha);
+
+            if(total > randomVal){
+                c.members.insert(i);
+                break;
+            }
+        }
+    }
 
     for(auto& c : currentTransitionProbabilityClasses){
         c.recomputeEigens();
@@ -90,13 +109,6 @@ void Model::accept(){
         oldPhylogeny = currentPhylogeny;
     }
 
-    if(updateAssignments){
-        std::copy(currentClassAssignments.get(),
-            currentClassAssignments.get() + numChar,
-            oldClassAssignments.get()
-        );
-    }
-
     std::copy(rescaleBuffer.get(), 
         rescaleBuffer.get() + numChar * numNodes,
         rescaleBuffer.get() + numChar * numNodes
@@ -114,20 +126,17 @@ void Model::accept(){
     acceptedNNI += (int)updateNNI;
     acceptedBranchLength += (int)updateBranchLength;
     acceptedStationary += (int)updateStationary;
-    acceptedAssignments += (int)updateAssignments;
     acceptedSubtreeScale += (int)updateScaleSubtree;
 
     proposedNNI += (int)updateNNI;
     proposedBranchLength += (int)updateBranchLength;
     proposedStationary += (int)updateStationary;
-    proposedAssignments += (int)updateAssignments;
     proposedSubtreeScale += (int)updateScaleSubtree;
 
     updateStationary = false;
     updateNNI = false;
     updateBranchLength = false;
     updateScaleSubtree = false;
-    updateAssignments = false;
 }
 
 void Model::reject(){
@@ -135,13 +144,6 @@ void Model::reject(){
 
     if(updateNNI || updateBranchLength || updateScaleSubtree){
         currentPhylogeny = oldPhylogeny;
-    }
-
-    if(updateAssignments){
-        std::copy(oldClassAssignments.get(),
-            oldClassAssignments.get() + numChar,
-            currentClassAssignments.get()
-        );
     }
 
     std::copy(rescaleBuffer.get() + numChar * numNodes,
@@ -162,12 +164,10 @@ void Model::reject(){
     proposedBranchLength += (int)updateBranchLength;
     proposedStationary += (int)updateStationary;
     proposedSubtreeScale += (int)updateScaleSubtree;
-    proposedAssignments += (int)updateAssignments;
 
     updateStationary = false;
     updateNNI = false;
     updateBranchLength = false;
-    updateAssignments = false;
     updateBranchLength = false;
 }
 
@@ -189,6 +189,13 @@ double Model::lnPrior(){
     lnP += GammaLogPDF(lengthSum, shape, rate);
 
     // For now we will assume flat priors on the stationary
+    lnP += std::log(dppAlpha) * currentTransitionProbabilityClasses.size();
+
+    for (auto& c : currentTransitionProbabilityClasses) {
+        lnP += std::lgamma(c.members.size());
+    }
+
+    lnP += std::lgamma(dppAlpha) - std::lgamma(dppAlpha + numChar);
 
     return lnP;
 }
@@ -227,45 +234,47 @@ void Model::refreshLikelihood(){
         }
     }
 
-
     for(auto n : postOrder){
         int nIndex = n->id;
         uint8_t nWorkingSpace = currentConditionalLikelihoodFlags[nIndex];
         if(n->updateCL && !n->isTip){ // Tips never need their CL buffer updated because it just defined by the data
-            auto pNN = conditionaLikelihoodBuffer.get() + nIndex * numChar + (nWorkingSpace * numNodes * numChar);
+            auto pN = conditionaLikelihoodBuffer.get() + nIndex * numChar + (nWorkingSpace * numNodes * numChar);
             for(int i = 0; i < numChar; i++){
-                pNN[i] = Eigen::Vector<double, 20>::Ones();
+                pN[i] = Eigen::Vector<double, 20>::Ones();
             }
 
             for(auto d : n->descendants){
                 int dIndex = d->id;
                 uint8_t dWorkingSpace = currentConditionalLikelihoodFlags[dIndex];
 
-                auto pN = pNN;
                 auto pD = conditionaLikelihoodBuffer.get() + dIndex * numChar + (dWorkingSpace * numNodes * numChar);
 
-                std::vector<Eigen::Matrix<double, 20, 20>> pMatrices;
-                for(auto& c : currentTransitionProbabilityClasses){
-                    pMatrices.push_back(c.transitionProbabilities[dIndex]);
-                }
+                Eigen::Matrix<double,20,1> workBuffer;
 
-                for(int c = 0; c < numChar; c++){
-                    Eigen::Matrix<double, 20, 20>& P = pMatrices[currentClassAssignments[c]];
-                    *pN = (*pN).array() * (P * (*pD)).array();
-                    pD++;
-                    pN++;
+                /*
+                    We are adopting a class-wise version of the inner loop. Indexing isn't as nice as incrementing a pointer
+                    but when we have many classes we don't want to have to re-access a block of memory. Lets say that we have
+                    100s of matrices - those aren't going to all fit in the cache. So if we alternate between matrix use due
+                    to iterating over sites rather than classes, we risk additional cache misses
+                */
+                for(auto& tClass : currentTransitionProbabilityClasses){
+                    Eigen::Matrix<double, 20, 20>& P = tClass.transitionProbabilities[dIndex];
+                    for(int c : tClass.members){
+                        workBuffer.noalias() = P * pD[c];
+                        pN[c].array() *= workBuffer.array();
+                    }
                 }
             }
             double* rescalePointer = rescaleBuffer.get() + numChar * nIndex;
             std::fill(rescalePointer, rescalePointer + numChar, 0.0);
 
             for(int c = 0; c < numChar; c++){
-                double max = pNN->maxCoeff();
-                *pNN /= max;
+                double max = pN->maxCoeff();
+                *pN /= max;
                 *rescalePointer = std::log(max);
 
                 rescalePointer++;
-                pNN++;
+                pN++;
             }
         }
     }
@@ -280,11 +289,12 @@ void Model::refreshLikelihood(){
     auto pR = conditionaLikelihoodBuffer.get() + rIndex * numChar + (dWorkingSpace * numNodes * numChar);
     double lnL = 0.0;
 
-    for(int c = 0; c < numChar; c++){
-        auto stationaryVec = (currentTransitionProbabilityClasses[currentClassAssignments[c]].stationaryDistribution).array();
-        double siteLikelihood = (stationaryVec * (*pR).array()).sum();
-        lnL += std::log(siteLikelihood);
-        pR ++;
+    for(auto& tClass : currentTransitionProbabilityClasses){
+        auto stationaryVec = (tClass.stationaryDistribution).array();
+        for(int c : tClass.members){
+            double siteLikelihood = (stationaryVec * (pR[c]).array()).sum();
+            lnL += std::log(siteLikelihood);
+        }
     }
 
     double* rescalePointer = rescaleBuffer.get();
@@ -333,6 +343,171 @@ double Model::stationaryMove(){
     currentPhylogeny.updateAll();
 
     return hastings;
+}
+
+double Model::gibbsPartitionMove(){
+    auto generator = std::mt19937(std::random_device{}());
+    auto unifDist = std::uniform_real_distribution(0.0, 1.0);
+
+    auto postOrder = currentPhylogeny.getPostOrder();
+
+    int numAux = 5;
+    int numIter = 25;
+
+    double alphaSplit = std::log(dppAlpha/numAux);
+
+    int bufferSize = (4 * numAux + currentTransitionProbabilityClasses.size());
+    auto tempCLBuffer = new Eigen::Vector<double, 20>[numChar * bufferSize];
+    auto tempRescaleBuffer = new double[numNodes * bufferSize];
+    for(int i = 0; i < numNodes * bufferSize; i++){
+        tempRescaleBuffer[i] = 0.0;
+        tempCLBuffer[i] = Eigen::Vector<double, 20>::Zero();
+    }
+
+    // Choosing to update randomly seems like it is the best strategy?
+    for(int iter = 0; iter < numIter; iter++){
+        int randomSite = (int)(unifDist(generator) * numChar);
+        int originalCategory = -1;
+        for (int i = 0; i < currentTransitionProbabilityClasses.size(); i++) {
+            if (currentTransitionProbabilityClasses[i].members.count(randomSite)) {
+                originalCategory = i;
+                break;
+            }
+        }
+
+        // Unassign and delete the category if it is empty
+        currentTransitionProbabilityClasses[originalCategory].members.erase(randomSite);
+        if(currentTransitionProbabilityClasses[originalCategory].members.size() == 0){
+            currentTransitionProbabilityClasses.erase(currentTransitionProbabilityClasses.begin() + originalCategory);
+        }
+
+        for(int n = 0; n < numAux; n++){
+            auto auxCat = TransitionProbabilityClass(numNodes, baseMatrix.get());
+            auxCat.recomputeEigens();
+            for(auto n : postOrder){
+                n->updateTP = false;
+                auxCat.recomputeTransitionProbs(n->id, n->branchLength, 1.0);
+            }
+            currentTransitionProbabilityClasses.push_back(auxCat);
+        }
+
+        int catSize = currentTransitionProbabilityClasses.size();
+
+        // We try to give ourselves a big enough buffer at the beginning, but if it gets too small, update it.
+        if(bufferSize < catSize){
+            delete [] tempCLBuffer;
+            delete [] tempRescaleBuffer;
+
+            bufferSize = (4 * numAux + catSize);
+            tempCLBuffer = new Eigen::Vector<double, 20>[numChar * bufferSize];
+            tempRescaleBuffer = new double[numNodes * bufferSize];
+            for(int i = 0; i < numNodes * bufferSize; i++){
+                tempRescaleBuffer[i] = 0.0;
+                tempCLBuffer[i] = Eigen::Vector<double, 20>::Zero();
+            }
+        }
+
+        // Run the pruning algorithm
+        for(auto n : postOrder){
+            int nIndex = n->id;
+            auto pN = tempCLBuffer + nIndex * bufferSize;
+            if(!n->isTip){
+                for(int i = 0; i < numChar; i++){
+                    pN[i] = Eigen::Vector<double, 20>::Ones();
+                }
+
+                for(auto d : n->descendants){
+                    int dIndex = d->id;
+
+                    auto pD = tempCLBuffer+ dIndex * bufferSize;
+
+                    Eigen::Matrix<double,20,1> workBuffer;
+
+                    for(int c = 0; c < catSize; c++){
+                        Eigen::Matrix<double, 20, 20>& P = currentTransitionProbabilityClasses[c].transitionProbabilities[dIndex];
+                        workBuffer.noalias() = P * pD[c];
+                        pN[c].array() *= workBuffer.array();
+                    }
+                }
+                double* rescalePointer = tempRescaleBuffer + bufferSize * nIndex;
+                std::fill(rescalePointer, rescalePointer + bufferSize, 0.0);
+
+                for(int c = 0; c < catSize; c++){
+                    double max = pN->maxCoeff();
+                    *pN /= max;
+                    *rescalePointer = std::log(max);
+
+                    rescalePointer++;
+                    pN++;
+                }
+            }
+            else{
+                for(int c = 0; c < catSize; c++){
+                    pN[c] = *(conditionaLikelihoodBuffer.get() + nIndex * numChar + randomSite);
+                }
+            }
+        }
+
+        int rIndex = currentPhylogeny.getRoot()->id;
+        auto pR = tempCLBuffer + rIndex * bufferSize;
+        std::vector<double> likelihoodVec;
+
+        for(int c = 0; c < catSize; c++){
+            auto stationaryVec = (currentTransitionProbabilityClasses[c].stationaryDistribution).array();
+            double siteLikelihood = (stationaryVec * (pR[c]).array()).sum();
+            siteLikelihood = std::log(siteLikelihood);
+            for(auto n : postOrder){
+                siteLikelihood += (tempRescaleBuffer + bufferSize * n->id)[c];
+            }
+            if(c < catSize - numAux){
+                likelihoodVec.push_back(siteLikelihood + std::log(currentTransitionProbabilityClasses[c].members.size()));
+            }
+            else {
+                likelihoodVec.push_back(siteLikelihood + alphaSplit);
+            }
+        }
+
+        double maxL = *std::max_element(likelihoodVec.begin(), likelihoodVec.end());
+        double total = 0.0;
+        for(double& d : likelihoodVec){
+            d -= maxL;
+            d = std::exp(d);
+            total += d;
+        }
+
+        double categoryDraw = total * unifDist(generator);
+
+        total = 0.0;
+        bool assigned = false;
+        for(int i = 0; i < likelihoodVec.size(); i++){
+            total += likelihoodVec[i];
+            if(total > categoryDraw){
+                if(i < catSize - numAux) { //It already exists
+                    for(int i = 0; i < numAux; i++)
+                        currentTransitionProbabilityClasses.pop_back();
+                    currentTransitionProbabilityClasses[i].members.insert(randomSite);
+                }
+                else {
+                    // Delete the num aux other than the one we want.
+                    for (int c = catSize - 1; c >= catSize - numAux; --c) {
+                        if (c != i) {
+                            currentTransitionProbabilityClasses.erase(currentTransitionProbabilityClasses.begin() + c);
+                        }
+                    }
+                    currentTransitionProbabilityClasses[currentTransitionProbabilityClasses.size()-1].members.insert(randomSite);
+                }
+                break;
+            }
+        }
+    }
+
+    updateStationary = true;
+    currentPhylogeny.updateAll();
+
+    delete [] tempCLBuffer;
+    delete [] tempRescaleBuffer;
+
+    return INFINITY;
 }
 
 void Model::tune(){

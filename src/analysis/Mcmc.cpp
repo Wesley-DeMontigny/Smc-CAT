@@ -22,11 +22,15 @@ void Mcmc::burnin(int iterations, int tuneFrequency, int printFrequency){
         std::function<double()> proposal;
         int numGibbs = 5;
 
-        if(moveChoice < 0.375){
+        if(moveChoice < 0.25){
             proposal = [this](){ return model.topologyMove();};
         }
-        else if(moveChoice < 0.75){
+        else if(moveChoice < 0.5){
             proposal = [this](){ return model.branchMove();};
+        }
+        else if(moveChoice < 0.55){
+            proposal = [this](){ return model.gibbsPartitionMove();};
+            numGibbs = 1;
         }
         else{
             proposal = [this](){ return model.stationaryMove();};

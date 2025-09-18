@@ -313,6 +313,7 @@ int scaleSubtreeRecurse(TreeNode* n, double val){
 double Tree::scaleSubtreeMove(double delta, std::mt19937& gen){
     std::uniform_real_distribution unifDist(0.0, 1.0);
 
+
     TreeNode* p = nullptr;
     do{
         p = nodes[(int)(unifDist(gen) * nodes.size())].get();

@@ -3,6 +3,7 @@
 #include <eigen3/Eigen/Dense>
 #include <memory>
 #include <random>
+#include <set>
 
 struct TransitionProbabilityClass {
     TransitionProbabilityClass(int n, Eigen::Matrix<double, 20, 20>* bM);
@@ -15,9 +16,13 @@ struct TransitionProbabilityClass {
     Eigen::Matrix<double, 20, 20>* baseMatrix;
     Eigen::Vector<double, 20> stationaryDistribution;
 
+    std::set<int> members;
+
     void recomputeEigens();
     void recomputeTransitionProbs(int n, double t, double r);
     double dirichletSimplexMove(double alpha, std::mt19937& gen);
+
+    static Eigen::Vector<double, 20> sampleStationary(Eigen::Vector<double, 20> alpha, std::mt19937& gen);
 
     bool updated;
 };

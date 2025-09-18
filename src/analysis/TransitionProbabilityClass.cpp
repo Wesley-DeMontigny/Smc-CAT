@@ -1,21 +1,6 @@
 #include "TransitionProbabilityClass.hpp"
 #include <eigen3/Eigen/Eigenvalues>
 #include <iostream>
-
-Eigen::Vector<double, 20> sampleStationaryDist(Eigen::Vector<double, 20> alpha, std::mt19937& gen){
-    Eigen::Vector<double, 20> stationaryDistribution = Eigen::Vector<double, 20>::Zero();
-
-    double denom = 0.0;
-    for (size_t i = 0; i < 20; ++i) {
-        std::gamma_distribution<double> gammaDist(alpha(i), 1.0);
-        double randGamma = gammaDist(gen);
-        stationaryDistribution(i) = randGamma;
-        denom += randGamma;
-    }
-
-    return stationaryDistribution / denom;
-}
-
 double stationaryDirichletLogPDF(const Eigen::Vector<double, 20>& x,
                                  const Eigen::Vector<double, 20>& alpha) {
     double alpha0 = alpha.sum();
@@ -38,10 +23,24 @@ TransitionProbabilityClass::TransitionProbabilityClass(int n, Eigen::Matrix<doub
 
     transitionProbabilities.shrink_to_fit();
 
-    // Sample from a dirichlet with very mild centering
     auto generator = std::mt19937(std::random_device{}());
-    stationaryDistribution = sampleStationaryDist(Eigen::Vector<double, 20>::Ones() * 1.5, generator);
+    stationaryDistribution = sampleStationary(Eigen::Vector<double, 20>::Ones(), generator);
 }
+
+Eigen::Vector<double, 20> TransitionProbabilityClass::sampleStationary(Eigen::Vector<double, 20> alpha, std::mt19937& gen){
+    Eigen::Vector<double, 20> stationaryDistribution = Eigen::Vector<double, 20>::Zero();
+
+    double denom = 0.0;
+    for (size_t i = 0; i < 20; ++i) {
+        std::gamma_distribution<double> gammaDist(alpha(i), 1.0);
+        double randGamma = gammaDist(gen);
+        stationaryDistribution(i) = randGamma;
+        denom += randGamma;
+    }
+
+    return stationaryDistribution / denom;
+}
+
 
 void TransitionProbabilityClass::recomputeEigens(){
 Eigen::Matrix<double,20,20> Q = (*baseMatrix) * stationaryDistribution.asDiagonal();
@@ -81,7 +80,7 @@ double TransitionProbabilityClass::dirichletSimplexMove(double alpha, std::mt199
     Eigen::Vector<double, 20> concentrations = stationaryDistribution;
     concentrations *= alpha;
 
-    Eigen::Vector<double, 20> newStationaryDistribution = sampleStationaryDist(concentrations, gen);
+    Eigen::Vector<double, 20> newStationaryDistribution = sampleStationary(concentrations, gen);
 
     Eigen::Vector<double, 20> revConcentrations = newStationaryDistribution;
     revConcentrations *= alpha;

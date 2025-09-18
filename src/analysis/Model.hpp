@@ -26,6 +26,7 @@ class Model {
         double topologyMove();
         double branchMove();
         double stationaryMove();
+        double gibbsPartitionMove();
 
         void tune(); // Tune the proposal parameters
 
@@ -62,17 +63,16 @@ class Model {
         bool updateNNI = false;
         bool updateBranchLength = false;
         bool updateScaleSubtree = false;
-        bool updateAssignments = false;
 
         std::unique_ptr<uint8_t[]> currentConditionalLikelihoodFlags; // To stop us from having to swap the whole memory space, we just keep a working space flag for each node
         std::unique_ptr<uint8_t[]> oldConditionalLikelihoodFlags; // Swap back flags if rejected
-        std::unique_ptr<int[]> currentClassAssignments; // Working space for the class assignments
-        std::unique_ptr<int[]> oldClassAssignments; // Memory for the class assignments
 
         std::unique_ptr<Eigen::Vector<double, 20>[]> conditionaLikelihoodBuffer; // Contains all the conditional likelihoods for each node (rescaled). Should be size NumSites x NumNodes x 2
         std::unique_ptr<double[]> rescaleBuffer; // Contains all the rescale values we computed. Should be size NumNodes x NumSites x 2.
+        
         std::vector<TransitionProbabilityClass> currentTransitionProbabilityClasses; // Contains all of the current DPP categories
         std::vector<TransitionProbabilityClass> oldTransitionProbabilityClasses; // Memory of the DPP categories to restore
+        double dppAlpha = 0.5;
 };
 
 #endif
