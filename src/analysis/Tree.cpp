@@ -299,31 +299,37 @@ double Tree::scaleBranchMove(double delta, std::mt19937& gen){
 }
 
 int scaleSubtreeRecurse(TreeNode* n, double val){
+    int c = 0;
     for(auto children : n->descendants){
-        scaleSubtreeRecurse(children, val);
+        c += scaleSubtreeRecurse(children, val);
     }
+
+    n->branchLength *= val;
+    n->updateCL = true;
+    n->updateTP = true;
+    return c + 1;
 }
 
 double Tree::scaleSubtreeMove(double delta, std::mt19937& gen){
     std::uniform_real_distribution unifDist(0.0, 1.0);
 
-    TreeNode* p = nodes[(int)(unifDist(gen) * nodes.size())].get();
-
-    double currentV = p->branchLength;
-    double scale = std::exp(delta * (unifDist(gen) - 0.5));
-    double newV = currentV * scale;
-    p->branchLength = newV;
-    p->updateTP = true;
-
-    TreeNode* q = p;
+    TreeNode* p = nullptr;
     do{
+        p = nodes[(int)(unifDist(gen) * nodes.size())].get();
+    }
+    while(p == root);
+
+    double scale = std::exp(delta * (unifDist(gen) - 0.5));
+    int numBranches = scaleSubtreeRecurse(p, scale);
+
+    TreeNode* q = p->ancestor;
+    while(q != root){
         q->updateCL = true;
         q = q->ancestor;
-    } 
-    while(q != root);
+    }
     root->updateCL = true;
 
-    return std::log(scale);
+    return numBranches * std::log(scale);
 }
 
 TreeNode* chooseNodeFromSet(const std::set<TreeNode*>& s, std::mt19937& gen){

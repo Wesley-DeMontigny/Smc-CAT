@@ -38,10 +38,13 @@ class Model {
         int acceptedNNI = 0;
         int proposedBranchLength = 0;
         int acceptedBranchLength = 0;
+        int proposedSubtreeScale = 0;
+        int acceptedSubtreeScale = 0;
         int proposedAssignments = 0;
         int acceptedAssignments = 0;
 
         double scaleDelta = 1.0; // Delta to scale an individual branch length
+        double subtreeScaleDelta = 1.0; // Delta to scale whole subtrees
         double stationaryAlpha = 500.0; // Concentration parameter for dirichlet simplex proposals
     private:
         Tree currentPhylogeny; // We need the phylogenies to be evaluated before the numNodes
@@ -58,6 +61,7 @@ class Model {
         bool updateStationary = false;
         bool updateNNI = false;
         bool updateBranchLength = false;
+        bool updateScaleSubtree = false;
         bool updateAssignments = false;
 
         std::unique_ptr<uint8_t[]> currentConditionalLikelihoodFlags; // To stop us from having to swap the whole memory space, we just keep a working space flag for each node

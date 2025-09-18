@@ -54,7 +54,8 @@ void Mcmc::burnin(int iterations, int tuneFrequency, int printFrequency){
 
         if(i % printFrequency == 0){
             std::cout << i << "\t" << currentPosterior << "\tBranch Scale Rate:" << (double)model.acceptedBranchLength/(double)model.proposedBranchLength << 
-                "\tNNI Rate:" << (double)model.acceptedNNI/(double)model.proposedNNI << "\tStationary Rate:" << (double)model.acceptedStationary/(double)model.proposedStationary << std::endl;
+                "\tNNI Rate:" << (double)model.acceptedNNI/(double)model.proposedNNI << "\tStationary Rate:" << (double)model.acceptedStationary/(double)model.proposedStationary <<
+                "\tSubtree Scale Rate:" << (double)model.acceptedSubtreeScale/(double)model.proposedSubtreeScale << std::endl;
         }
         if(i % tuneFrequency == 0){
             model.tune();

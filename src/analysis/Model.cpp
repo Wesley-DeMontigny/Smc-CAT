@@ -115,22 +115,25 @@ void Model::accept(){
     acceptedBranchLength += (int)updateBranchLength;
     acceptedStationary += (int)updateStationary;
     acceptedAssignments += (int)updateAssignments;
+    acceptedSubtreeScale += (int)updateScaleSubtree;
 
     proposedNNI += (int)updateNNI;
     proposedBranchLength += (int)updateBranchLength;
     proposedStationary += (int)updateStationary;
     proposedAssignments += (int)updateAssignments;
+    proposedSubtreeScale += (int)updateScaleSubtree;
 
     updateStationary = false;
     updateNNI = false;
     updateBranchLength = false;
+    updateScaleSubtree = false;
     updateAssignments = false;
 }
 
 void Model::reject(){
     currentLnLikelihood = oldLnLikelihood;
 
-    if(updateNNI || updateBranchLength){
+    if(updateNNI || updateBranchLength || updateScaleSubtree){
         currentPhylogeny = oldPhylogeny;
     }
 
@@ -151,19 +154,21 @@ void Model::reject(){
         currentConditionalLikelihoodFlags.get()
     );
 
-    if(updateBranchLength || updateStationary){
+    if(updateBranchLength || updateStationary || updateScaleSubtree){
         currentTransitionProbabilityClasses = oldTransitionProbabilityClasses;
     }
 
     proposedNNI += (int)updateNNI;
     proposedBranchLength += (int)updateBranchLength;
     proposedStationary += (int)updateStationary;
+    proposedSubtreeScale += (int)updateScaleSubtree;
     proposedAssignments += (int)updateAssignments;
 
     updateStationary = false;
     updateNNI = false;
     updateBranchLength = false;
     updateAssignments = false;
+    updateBranchLength = false;
 }
 
 double Model::lnLikelihood(){
@@ -204,7 +209,7 @@ void Model::refreshLikelihood(){
             }
         }
     }
-    else if(updateBranchLength){ // Update specific branch lengths if that was the last move
+    else if(updateBranchLength || updateScaleSubtree){ // Update specific branch lengths if that was the last move
         for(auto n : postOrder){
             if(n->updateTP){
                 n->updateTP = false;
@@ -302,9 +307,18 @@ double Model::topologyMove(){
 
 double Model::branchMove(){
     auto generator = std::mt19937(std::random_device{}());
+    std::uniform_real_distribution unifDist(0.0, 1.0);
 
-    double hastings = currentPhylogeny.scaleBranchMove(scaleDelta, generator);
-    updateBranchLength = true;
+    double hastings = 0.0;
+
+    if(unifDist(generator) < 0.75){
+        hastings = currentPhylogeny.scaleBranchMove(scaleDelta, generator);
+        updateBranchLength = true;
+    }
+    else {
+        hastings = currentPhylogeny.scaleSubtreeMove(subtreeScaleDelta, generator);
+        updateScaleSubtree = true;
+    }
 
     return hastings;
 }
@@ -333,6 +347,19 @@ void Model::tune(){
         }
         acceptedBranchLength = 0;
         proposedBranchLength = 0;
+    }
+
+    if(proposedSubtreeScale > 0){
+        double ssRate = (double)acceptedSubtreeScale/(double)proposedSubtreeScale;
+
+        if ( ssRate > 0.33 ) {
+            subtreeScaleDelta *= (1.0 + ((ssRate-0.33)/0.67));
+        }
+        else {
+            subtreeScaleDelta /= (2.0 - ssRate/0.33);
+        }
+        acceptedSubtreeScale = 0;
+        proposedSubtreeScale = 0;
     }
 
     if(proposedStationary > 0){
