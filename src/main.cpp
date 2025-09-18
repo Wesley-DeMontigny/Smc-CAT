@@ -11,7 +11,7 @@ int main() {
     Model m(aln);
     Mcmc analysis(aln, m);
 
-    analysis.burnin(20000, 1000, 100);
+    analysis.burnin(50000, 1000, 100);
 
     std::cout << m.getNewick() << std::endl;
     

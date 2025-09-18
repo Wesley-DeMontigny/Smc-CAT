@@ -16,8 +16,9 @@ struct TreeNode {
     bool isRoot;
     double branchLength;
 
-    std::shared_ptr<TreeNode> ancestor;
-    std::set<std::shared_ptr<TreeNode>> descendants;
+    // With these raw pointers we are enforcing that our tree node's access will not outlive the node vector
+    TreeNode* ancestor;
+    std::set<TreeNode*> descendants;
 
     bool updateCL;
     bool updateTP;
@@ -37,12 +38,12 @@ class Tree {
         ~Tree();
 
         std::string generateNewick(); // Generates a Newick string for the tree. Assumes the post-order is correct.
-        std::vector<std::shared_ptr<TreeNode>>& getPostOrder() {return postOrder;}
-        std::vector<std::shared_ptr<TreeNode>>& getTips() {return tips;}
+        std::vector<TreeNode*>& getPostOrder() {return postOrder;}
+        std::vector<TreeNode*>& getTips() {return tips;}
 
         const int getNumNodes() {return postOrder.size();}
         const int getNumTaxa() {return tips.size();}
-        std::shared_ptr<TreeNode> getRoot() {return root;}
+        TreeNode* getRoot() {return root;}
 
         double scaleBranchMove(double delta, std::mt19937& gen);
         double scaleSubtreeMove(double delta, std::mt19937& gen);
@@ -53,13 +54,13 @@ class Tree {
         void regeneratePostOrder();
         void clone(const Tree& t);
 
-        std::shared_ptr<TreeNode> root;
-        std::vector<std::shared_ptr<TreeNode>> postOrder;
-        std::vector<std::shared_ptr<TreeNode>> tips;
-        std::vector<std::shared_ptr<TreeNode>> nodes;
+        TreeNode* root;
+        std::vector<TreeNode*> postOrder;
+        std::vector<TreeNode*> tips;
+        std::vector<std::unique_ptr<TreeNode>> nodes; // We let the nodes vector own the node unique_ptr
 
-        void recursivePostOrderAssign(std::shared_ptr<TreeNode> p);
-        std::string recursiveNewickGenerate(std::string s, std::shared_ptr<TreeNode> p);
+        void recursivePostOrderAssign(TreeNode* p);
+        std::string recursiveNewickGenerate(std::string s, TreeNode* p);
 };
 
 #endif

@@ -12,60 +12,62 @@ Tree::Tree(int n){
 
     std::exponential_distribution<double> branchDist(10.0);
 
-    root = std::shared_ptr<TreeNode>(new TreeNode {-1, "root", false, true, 0.0, nullptr, {}, false, false});
-    auto A = std::shared_ptr<TreeNode>(new TreeNode {0, "t0", true, false, branchDist(generator), root, {}, false, false});
-    auto B = std::shared_ptr<TreeNode>(new TreeNode {1, "t1", true, false, branchDist(generator), root, {}, false, false});
-    auto C = std::shared_ptr<TreeNode>(new TreeNode {2, "t2", true, false, branchDist(generator), root, {}, false, false});
+    auto rootNode = std::unique_ptr<TreeNode>(new TreeNode {-1, "root", false, true, 0.0, nullptr, {}, false, false});
+    root = rootNode.get();
+    auto A = std::unique_ptr<TreeNode>(new TreeNode {0, "t0", true, false, branchDist(generator), root, {}, false, false});
+    auto B = std::unique_ptr<TreeNode>(new TreeNode {1, "t1", true, false, branchDist(generator), root, {}, false, false});
+    auto C = std::unique_ptr<TreeNode>(new TreeNode {2, "t2", true, false, branchDist(generator), root, {}, false, false});
     
-    root->descendants.insert(A);
-    root->descendants.insert(B);
-    root->descendants.insert(C);
-    
-    nodes.push_back(root);
-    nodes.push_back(A);
-    nodes.push_back(B);
-    nodes.push_back(C);
+    root->descendants.insert(A.get());
+    root->descendants.insert(B.get());
+    root->descendants.insert(C.get());
 
-    tips.push_back(A);
-    tips.push_back(B);
-    tips.push_back(C);
+    tips.push_back(A.get());
+    tips.push_back(B.get());
+    tips.push_back(C.get());
+
+    nodes.push_back(std::move(rootNode));
+    nodes.push_back(std::move(A));
+    nodes.push_back(std::move(B));
+    nodes.push_back(std::move(C));
 
     for(int i = 3; i < n; i++){
         std::uniform_int_distribution<int> dist(0,i-1);
         int randomIndex = dist(generator);
         auto randomTip = tips[randomIndex];
 
-        auto newInternal = std::shared_ptr<TreeNode>(new TreeNode {0, "", false, false, branchDist(generator), randomTip->ancestor, {}, false, false});
-        auto newTip = std::shared_ptr<TreeNode>(new TreeNode {i, "t" + std::to_string(i), true, false, branchDist(generator), newInternal, {}, false, false});
-        tips.push_back(newTip);
-        nodes.push_back(newInternal);
-        nodes.push_back(newTip);
+        auto newInternal = std::unique_ptr<TreeNode>(new TreeNode {0, "", false, false, branchDist(generator), randomTip->ancestor, {}, false, false});
+        auto newTip = std::unique_ptr<TreeNode>(new TreeNode {i, "t" + std::to_string(i), true, false, branchDist(generator), newInternal.get(), {}, false, false});
+        tips.push_back(newTip.get());
 
         // Set the new internal node to be connected to the old ancestor and branch off with the two new nodes
-        randomTip->ancestor = newInternal;
-        newInternal->descendants.insert(newTip);
+        randomTip->ancestor = newInternal.get();
+        newInternal->descendants.insert(newTip.get());
         newInternal->descendants.insert(randomTip);
 
         // Update old ancestor by adding a new descendant and removing the old one
-        newInternal->ancestor->descendants.insert(newInternal);
+        newInternal->ancestor->descendants.insert(newInternal.get());
         auto it = newInternal->ancestor->descendants.find(randomTip);
         if (it != newInternal->ancestor->descendants.end()) {
             newInternal->ancestor->descendants.erase(it);
         }
+
+        nodes.push_back(std::move(newInternal));
+        nodes.push_back(std::move(newTip));
     }
 
     // Assign node ID to the non-tips
     int counter = n;
-    for(auto node : nodes){
-        if(!node->isTip){
-            node->id = counter;
+    for(int i = 0; i < nodes.size(); i++){
+        if(!nodes[i]->isTip){
+            nodes[i]->id = counter;
             counter++;
         }
     }
 
     // Sort so we can access nodes by their ID
     std::sort(nodes.begin(), nodes.end(),
-        [](const std::shared_ptr<TreeNode>& a, const std::shared_ptr<TreeNode>& b) {
+        [](const std::unique_ptr<TreeNode>& a, const std::unique_ptr<TreeNode>& b) {
             return a->id < b->id;
         }
     );
@@ -84,31 +86,32 @@ Tree::Tree(std::string s){
     std::string branchTokens = "";
     bool readingName = false;
     bool readingBranch = false;
-    std::shared_ptr<TreeNode> currentNode = nullptr;
+    TreeNode*currentNode = nullptr;
     int counter = 0;
 
     for(auto character : s){
         if(character == '('){
             if(currentNode == nullptr){
-                root = std::shared_ptr<TreeNode>(new TreeNode {-1, "root", false, true, 0.0, nullptr, {}, false, false});
-                currentNode = root;
-                nodes.push_back(root);
+                auto rootNode = std::unique_ptr<TreeNode>(new TreeNode {-1, "root", false, true, 0.0, nullptr, {}, false, false});
+                currentNode = rootNode.get();
+                root = rootNode.get();
+                nodes.push_back(std::move(rootNode));
             }
             else {
-                auto newInternal = std::shared_ptr<TreeNode>(new TreeNode {0, "", false, false, 0.0, currentNode, {}, false, false});
-                currentNode->descendants.insert(newInternal);
-                nodes.push_back(newInternal);
-                currentNode = newInternal;
+                auto newInternal = std::unique_ptr<TreeNode>(new TreeNode {0, "", false, false, 0.0, currentNode, {}, false, false});
+                currentNode->descendants.insert(newInternal.get());
+                nodes.push_back(std::move(newInternal));
+                currentNode = newInternal.get();
             }
         }
         else if(character == ':'){
             readingBranch = true;
             if(readingName){
-                auto newTip = std::shared_ptr<TreeNode>(new TreeNode {counter, nameTokens, true, false, 0.0, currentNode, {}, false, false});
-                currentNode->descendants.insert(newTip);
-                currentNode = newTip;
-                tips.push_back(newTip);
-                nodes.push_back(newTip);
+                auto newTip = std::unique_ptr<TreeNode>(new TreeNode {counter, nameTokens, true, false, 0.0, currentNode, {}, false, false});
+                currentNode->descendants.insert(newTip.get());
+                currentNode = newTip.get();
+                tips.push_back(newTip.get());
+                nodes.push_back(std::move(newTip));
 
                 counter++;
                 nameTokens = "";
@@ -138,16 +141,16 @@ Tree::Tree(std::string s){
         }
     }
 
-    for(auto node : nodes){
-        if(!node->isTip){
-            node->id = counter;
+    for(int i = 0; i < nodes.size(); i++){
+        if(!nodes[i]->isTip){
+            nodes[i]->id = counter;
             counter++;
         }
     }
 
     // Sort so we can access nodes by their ID
     std::sort(nodes.begin(), nodes.end(),
-        [](const std::shared_ptr<TreeNode>& a, const std::shared_ptr<TreeNode>& b) {
+        [](const std::unique_ptr<TreeNode>& a, const std::unique_ptr<TreeNode>& b) {
             return a->id < b->id;
         }
     );
@@ -184,11 +187,11 @@ Tree& Tree::operator=(const Tree& t) {
 void Tree::clone(const Tree& t){
     assert(nodes.size() == t.nodes.size());
 
-    root = nodes[t.root->id];
+    root = nodes[t.root->id].get();
 
     for(int i = 0; i < nodes.size(); i++){
-        auto p = nodes[i];
-        auto q = t.nodes[i];
+        auto p = nodes[i].get();
+        auto q = t.nodes[i].get();
 
         p->id = q->id;
         p->isRoot = q->isRoot;
@@ -200,16 +203,16 @@ void Tree::clone(const Tree& t){
         p->descendants.clear();
 
         for(auto n : q->descendants)
-            p->descendants.insert(nodes[n->id]);
+            p->descendants.insert(nodes[n->id].get());
 
         if(q->ancestor != nullptr)
-            p->ancestor = nodes[q->ancestor->id];
+            p->ancestor = nodes[q->ancestor->id].get();
     }
 
     postOrder.clear();
     for(int i = 0; i < nodes.size(); i++){
         auto q = t.postOrder[i];
-        postOrder.push_back(nodes[q->id]);
+        postOrder.push_back(nodes[q->id].get());
     }
 }
 
@@ -231,7 +234,7 @@ void Tree::regeneratePostOrder(){
     recursivePostOrderAssign(root);
 }
 
-void Tree::recursivePostOrderAssign(std::shared_ptr<TreeNode> p){
+void Tree::recursivePostOrderAssign(TreeNode* p){
     if(! p->isTip){
         for(auto child : p->descendants) {
             recursivePostOrderAssign(child);
@@ -241,7 +244,7 @@ void Tree::recursivePostOrderAssign(std::shared_ptr<TreeNode> p){
     postOrder.push_back(p);
 }
 
-std::string Tree::recursiveNewickGenerate(std::string s, std::shared_ptr<TreeNode> p){
+std::string Tree::recursiveNewickGenerate(std::string s, TreeNode* p){
     if(! p->isTip){
         s += "(";
         for(auto child : p->descendants) {
@@ -272,9 +275,9 @@ void Tree::updateAll(){
 double Tree::scaleBranchMove(double delta, std::mt19937& gen){
     std::uniform_real_distribution unifDist(0.0, 1.0);
 
-    std::shared_ptr<TreeNode> p = nullptr;
+    TreeNode* p = nullptr;
     do{
-        p = nodes[(int)(unifDist(gen) * nodes.size())];
+        p = nodes[(int)(unifDist(gen) * nodes.size())].get();
     }
     while(p == root);
 
@@ -284,7 +287,7 @@ double Tree::scaleBranchMove(double delta, std::mt19937& gen){
     p->branchLength = newV;
     p->updateTP = true;
 
-    std::shared_ptr<TreeNode> q = p;
+    TreeNode* q = p;
     do{
         q->updateCL = true;
         q = q->ancestor;
@@ -295,7 +298,7 @@ double Tree::scaleBranchMove(double delta, std::mt19937& gen){
     return std::log(scale);
 }
 
-int scaleSubtreeRecurse(std::shared_ptr<TreeNode> n, double val){
+int scaleSubtreeRecurse(TreeNode* n, double val){
     for(auto children : n->descendants){
         scaleSubtreeRecurse(children, val);
     }
@@ -304,7 +307,7 @@ int scaleSubtreeRecurse(std::shared_ptr<TreeNode> n, double val){
 double Tree::scaleSubtreeMove(double delta, std::mt19937& gen){
     std::uniform_real_distribution unifDist(0.0, 1.0);
 
-    std::shared_ptr<TreeNode> p = nodes[(int)(unifDist(gen) * nodes.size())];
+    TreeNode* p = nodes[(int)(unifDist(gen) * nodes.size())].get();
 
     double currentV = p->branchLength;
     double scale = std::exp(delta * (unifDist(gen) - 0.5));
@@ -312,7 +315,7 @@ double Tree::scaleSubtreeMove(double delta, std::mt19937& gen){
     p->branchLength = newV;
     p->updateTP = true;
 
-    std::shared_ptr<TreeNode> q = p;
+    TreeNode* q = p;
     do{
         q->updateCL = true;
         q = q->ancestor;
@@ -323,7 +326,7 @@ double Tree::scaleSubtreeMove(double delta, std::mt19937& gen){
     return std::log(scale);
 }
 
-std::shared_ptr<TreeNode> chooseNodeFromSet(const std::set<std::shared_ptr<TreeNode>>& s, std::mt19937& gen){
+TreeNode* chooseNodeFromSet(const std::set<TreeNode*>& s, std::mt19937& gen){
     std::uniform_int_distribution<> dist(0, s.size() - 1);
 
     int index = dist(gen);
@@ -337,21 +340,21 @@ std::shared_ptr<TreeNode> chooseNodeFromSet(const std::set<std::shared_ptr<TreeN
 double Tree::NNIMove(std::mt19937& gen){
     std::uniform_real_distribution unifDist(0.0, 1.0);
 
-    std::shared_ptr<TreeNode> p = nullptr;
+    TreeNode* p = nullptr;
     do{
-        p = nodes[(int)(unifDist(gen) * nodes.size())];
+        p = nodes[(int)(unifDist(gen) * nodes.size())].get();
     }
     while(p == root || p->isTip);
 
-    std::shared_ptr<TreeNode> a = p->ancestor;
+    TreeNode* a = p->ancestor;
 
-    std::set<std::shared_ptr<TreeNode>> neighbors1 = p->descendants;
-    std::shared_ptr<TreeNode> n1 = chooseNodeFromSet(neighbors1, gen);
+    std::set<TreeNode*> neighbors1 = p->descendants;
+    TreeNode* n1 = chooseNodeFromSet(neighbors1, gen);
 
     // We exclude
-    std::set<std::shared_ptr<TreeNode>> neighbors2 = a->descendants;
+    std::set<TreeNode*> neighbors2 = a->descendants;
     neighbors2.erase(p);
-    std::shared_ptr<TreeNode> n2 = chooseNodeFromSet(neighbors2, gen);
+    TreeNode* n2 = chooseNodeFromSet(neighbors2, gen);
 
     n1->ancestor = a;
     n2->ancestor = p;
@@ -367,7 +370,7 @@ double Tree::NNIMove(std::mt19937& gen){
         a->descendants.erase(it2);
     }
 
-    std::shared_ptr<TreeNode> q = p;
+    TreeNode* q = p;
     do{
         q->updateCL = true;
         q = q->ancestor;

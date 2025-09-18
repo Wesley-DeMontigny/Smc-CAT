@@ -6,7 +6,6 @@
 
 struct TransitionProbabilityClass {
     TransitionProbabilityClass(int n, Eigen::Matrix<double, 20, 20>* bM);
-    ~TransitionProbabilityClass() {}
 
     std::vector<Eigen::Matrix<double, 20, 20>> transitionProbabilities; // Indexed by node
     Eigen::Matrix<std::complex<double>, 20, 20> eigenVectors;
