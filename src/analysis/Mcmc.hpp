@@ -4,25 +4,15 @@
 #include <iostream>
 #include <fstream>
 
-class Alignment;
-class Model;
+class Particle;
 
 /*
 
 */
 class Mcmc {
     public:
-        Mcmc(void)=delete;
-        Mcmc(Alignment& aln, Model& m);
-
-        void burnin(int iterations, int tuneFrequency, int printFrequency);
-        void run(int iterations);
-    private:
-        Alignment& alignment;
-        Model& model;
-
-        std::string analysisLog;
-        std::string treeLog;
+        Mcmc(void);
+        double run(Particle& m, int iterations, bool tune=true, bool debug=true, int tuneFrequency = 50, int printFrequency = 10, double tempering=1.0);
 };
 
 #endif

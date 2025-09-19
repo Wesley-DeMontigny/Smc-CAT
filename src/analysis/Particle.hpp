@@ -1,5 +1,5 @@
-#ifndef LIKELIHOOD_HPP
-#define LIKELIHOOD_HPP
+#ifndef PARTICLE_HPP
+#define PARTICLE_HPP
 #include <eigen3/Eigen/Dense>
 #include <memory>
 #include "TransitionProbabilityClass.hpp"
@@ -10,10 +10,12 @@ class Alignment;
 /*
 
 */
-class Model {
+class Particle {
     public:
-        Model(void)=delete;
-        Model(Alignment& aln);
+        Particle(void)=delete;
+        Particle(Alignment& aln);
+
+        void initialize();
 
         void refreshLikelihood();
 
@@ -26,11 +28,15 @@ class Model {
         double topologyMove();
         double branchMove();
         double stationaryMove();
-        double gibbsPartitionMove();
+        double gibbsPartitionMove(double tempering);
 
         void tune(); // Tune the proposal parameters
 
         std::string getNewick() {return currentPhylogeny.generateNewick();}
+        int getNumCategories() { return currentTransitionProbabilityClasses.size(); }
+
+        void write(const int id, const std::string& dir);
+        void read(const int id, const std::string& dir);
 
         // Variables to keep track of acceptance rates so we can tune and track performance
         int proposedStationary = 0;
@@ -41,8 +47,6 @@ class Model {
         int acceptedBranchLength = 0;
         int proposedSubtreeScale = 0;
         int acceptedSubtreeScale = 0;
-        int proposedAssignments = 0;
-        int acceptedAssignments = 0;
 
         double scaleDelta = 1.0; // Delta to scale an individual branch length
         double subtreeScaleDelta = 1.0; // Delta to scale whole subtrees
@@ -51,6 +55,7 @@ class Model {
         Tree currentPhylogeny; // We need the phylogenies to be evaluated before the numNodes
         Tree oldPhylogeny;
         std::unique_ptr<Eigen::Matrix<double, 20, 20>> baseMatrix;
+        Alignment& aln;
 
         int numChar;
         int numTaxa;

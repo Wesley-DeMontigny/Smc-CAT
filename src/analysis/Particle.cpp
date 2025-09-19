@@ -1,10 +1,19 @@
-#include "Model.hpp"
+#include "Particle.hpp"
 #include "Tree.hpp"
 #include "core/Alignment.hpp"
 #include "RateMatrices.hpp"
+#include "H5Cpp.h"
+#include <string>
+#include <vector>
+#include <sstream>
 #include <random>
 #include <iostream>
 #include <cmath>
+#include <filesystem>
+
+#if TIME_PROFILE == 1
+    #include <chrono>
+#endif
 
 double GammaLogPDF(double x, double shape, double rate){
     if (x <= 0.0) return -INFINITY; 
@@ -12,8 +21,8 @@ double GammaLogPDF(double x, double shape, double rate){
 }
 
 
-Model::Model(Alignment& aln) : 
-                       numChar(aln.getNumChar()), currentPhylogeny(aln.getTaxaNames()),
+Particle::Particle(Alignment& aln) : 
+                       numChar(aln.getNumChar()), currentPhylogeny(aln.getTaxaNames()), aln(aln),
                        oldPhylogeny(currentPhylogeny), numNodes(currentPhylogeny.getNumNodes()), numTaxa(aln.getNumTaxa()) {
 
     // We can make this configurable later
@@ -21,11 +30,6 @@ Model::Model(Alignment& aln) :
 
     currentConditionalLikelihoodFlags = std::unique_ptr<uint8_t[]>(new uint8_t[numNodes]);
     oldConditionalLikelihoodFlags = std::unique_ptr<uint8_t[]>(new uint8_t[numNodes]);
-    for(int i = 0; i < numNodes; i++){
-        currentConditionalLikelihoodFlags[i] = 0;
-        oldConditionalLikelihoodFlags[i] = 0;
-    }
-
     conditionaLikelihoodBuffer = std::unique_ptr<Eigen::Vector<double, 20>[]>(new Eigen::Vector<double, 20>[numChar * numNodes * 2]);
     rescaleBuffer = std::unique_ptr<double[]>(new double[numChar * numNodes *2]);
     for(int i = 0; i < numChar * numNodes * 2; i++){
@@ -47,6 +51,20 @@ Model::Model(Alignment& aln) :
             }
         }
     }
+
+    initialize();
+}
+
+void Particle::initialize(){
+    // We waste a little bit of compute the first time we initilize this particle object, but this is easiest right now
+    currentPhylogeny = Tree(aln.getTaxaNames());
+
+    for(int i = 0; i < numNodes; i++){
+        currentConditionalLikelihoodFlags[i] = 0;
+        oldConditionalLikelihoodFlags[i] = 0;
+    }
+
+    currentTransitionProbabilityClasses.clear();
 
     auto generator = std::mt19937(std::random_device{}());
     std::uniform_real_distribution unifDist(0.0, 1.0);
@@ -102,7 +120,7 @@ Model::Model(Alignment& aln) :
     oldLnLikelihood = currentLnLikelihood;
 }
 
-void Model::accept(){
+void Particle::accept(){
     oldLnLikelihood = currentLnLikelihood;
 
     if(updateNNI || updateBranchLength){
@@ -139,7 +157,7 @@ void Model::accept(){
     updateScaleSubtree = false;
 }
 
-void Model::reject(){
+void Particle::reject(){
     currentLnLikelihood = oldLnLikelihood;
 
     if(updateNNI || updateBranchLength || updateScaleSubtree){
@@ -171,11 +189,11 @@ void Model::reject(){
     updateBranchLength = false;
 }
 
-double Model::lnLikelihood(){
+double Particle::lnLikelihood(){
     return currentLnLikelihood;
 }
 
-double Model::lnPrior(){
+double Particle::lnPrior(){
     double lnP = 0.0;
 
     double shape = (double)(numNodes - 1);
@@ -200,8 +218,12 @@ double Model::lnPrior(){
     return lnP;
 }
 
-void Model::refreshLikelihood(){
+void Particle::refreshLikelihood(){
     auto postOrder = currentPhylogeny.getPostOrder();
+
+    #if TIME_PROFILE==1
+    std::chrono::steady_clock::time_point preTPUpdate = std::chrono::steady_clock::now();
+    #endif
 
     // All moves should be mutually exclusive each turn.
     if(updateStationary){ // Update all TPs of that class if that was the last move
@@ -227,12 +249,21 @@ void Model::refreshLikelihood(){
         }
     }
 
+    #if TIME_PROFILE==1
+    std::chrono::steady_clock::time_point postTPUpdate = std::chrono::steady_clock::now();
+    std::cout << "The transition probability update completed in " << std::chrono::duration_cast<std::chrono::milliseconds>(postTPUpdate - preTPUpdate).count() << "[milliseconds]" << std::endl;
+    #endif
+
     // Change the working space for everything that will need a CL update
     for(auto n : postOrder){
         if(n->updateCL){
             currentConditionalLikelihoodFlags[n->id] ^= 1;
         }
     }
+
+    #if TIME_PROFILE==1
+    std::chrono::steady_clock::time_point prePrune = std::chrono::steady_clock::now();
+    #endif
 
     for(auto n : postOrder){
         int nIndex = n->id;
@@ -279,6 +310,11 @@ void Model::refreshLikelihood(){
         }
     }
 
+    #if TIME_PROFILE==1
+    std::chrono::steady_clock::time_point postPrune = std::chrono::steady_clock::now();
+    std::cout << "Felsenstein's pruning algorithm completed in " << std::chrono::duration_cast<std::chrono::milliseconds>(postPrune - prePrune).count() << "[milliseconds]" << std::endl;
+    #endif
+
     for(auto n : postOrder){
         n->updateCL = false;
     }
@@ -306,7 +342,7 @@ void Model::refreshLikelihood(){
     currentLnLikelihood = lnL;
 }
 
-double Model::topologyMove(){
+double Particle::topologyMove(){
     auto generator = std::mt19937(std::random_device{}());
 
     double hastings = currentPhylogeny.NNIMove(generator);
@@ -315,7 +351,7 @@ double Model::topologyMove(){
     return hastings;
 }
 
-double Model::branchMove(){
+double Particle::branchMove(){
     auto generator = std::mt19937(std::random_device{}());
     std::uniform_real_distribution unifDist(0.0, 1.0);
 
@@ -333,7 +369,7 @@ double Model::branchMove(){
     return hastings;
 }
 
-double Model::stationaryMove(){
+double Particle::stationaryMove(){
     auto generator = std::mt19937(std::random_device{}());
     auto unifDist = std::uniform_int_distribution<int>(0, currentTransitionProbabilityClasses.size() - 1);
     double randCategory = unifDist(generator);
@@ -345,14 +381,14 @@ double Model::stationaryMove(){
     return hastings;
 }
 
-double Model::gibbsPartitionMove(){
+double Particle::gibbsPartitionMove(double tempering){
     auto generator = std::mt19937(std::random_device{}());
     auto unifDist = std::uniform_real_distribution(0.0, 1.0);
 
     auto postOrder = currentPhylogeny.getPostOrder();
 
     int numAux = 5;
-    int numIter = 25;
+    int numIter = numChar;
 
     double alphaSplit = std::log(dppAlpha/numAux);
 
@@ -366,6 +402,9 @@ double Model::gibbsPartitionMove(){
 
     // Choosing to update randomly seems like it is the best strategy?
     for(int iter = 0; iter < numIter; iter++){
+        #if TIME_PROFILE==1
+        std::chrono::steady_clock::time_point preIter = std::chrono::steady_clock::now();
+        #endif
         int randomSite = (int)(unifDist(generator) * numChar);
         int originalCategory = -1;
         for (int i = 0; i < currentTransitionProbabilityClasses.size(); i++) {
@@ -459,6 +498,7 @@ double Model::gibbsPartitionMove(){
             for(auto n : postOrder){
                 siteLikelihood += (tempRescaleBuffer + bufferSize * n->id)[c];
             }
+            siteLikelihood *= tempering;
             if(c < catSize - numAux){
                 likelihoodVec.push_back(siteLikelihood + std::log(currentTransitionProbabilityClasses[c].members.size()));
             }
@@ -483,7 +523,7 @@ double Model::gibbsPartitionMove(){
             total += likelihoodVec[i];
             if(total > categoryDraw){
                 if(i < catSize - numAux) { //It already exists
-                    for(int i = 0; i < numAux; i++)
+                    for(int j = 0; j < numAux; j++)
                         currentTransitionProbabilityClasses.pop_back();
                     currentTransitionProbabilityClasses[i].members.insert(randomSite);
                 }
@@ -499,6 +539,11 @@ double Model::gibbsPartitionMove(){
                 break;
             }
         }
+
+        #if TIME_PROFILE==1
+        std::chrono::steady_clock::time_point postIter = std::chrono::steady_clock::now();
+        std::cout << "CRP Gibbs iteration completed in " << std::chrono::duration_cast<std::chrono::milliseconds>(postIter - preIter).count() << "[milliseconds]" << std::endl;
+        #endif
     }
 
     updateStationary = true;
@@ -510,7 +555,7 @@ double Model::gibbsPartitionMove(){
     return INFINITY;
 }
 
-void Model::tune(){
+void Particle::tune(){
     if(proposedBranchLength > 0){
         double blRate = (double)acceptedBranchLength/(double)proposedBranchLength;
 
@@ -550,4 +595,141 @@ void Model::tune(){
         acceptedStationary = 0;
         proposedStationary = 0;
     }
+}
+
+void Particle::write(const int id, const std::string& dir){
+    using namespace H5;
+
+    std::vector<int> assignmentVector(numChar, -1);
+    for(int i = 0; i < currentTransitionProbabilityClasses.size(); i++){
+        auto cls = currentTransitionProbabilityClasses[i];
+        for(int m : cls.members)
+            assignmentVector[m] = i;
+    }
+
+
+    std::ostringstream groupName;
+    groupName << "state_" << id;
+
+    H5File h5File;
+
+    if (std::filesystem::exists(dir)) {
+        h5File = H5File(dir, H5F_ACC_RDWR);
+    } else {
+        h5File = H5File(dir, H5F_ACC_TRUNC);
+    }
+
+    // Create a group for this particle
+    Group group = h5File.createGroup("/" + groupName.str());
+
+    // Write Newick
+    StrType strDataType(PredType::C_S1, H5T_VARIABLE);
+    DataSpace strDataSpace(H5S_SCALAR);
+    DataSet newickData = group.createDataSet("tree", strDataType, strDataSpace);
+    std::string newickStr = currentPhylogeny.generateNewick();
+    newickData.write(&newickStr, strDataType);
+
+    // Write the assignment matrix
+    hsize_t assignmentDims[1] = { assignmentVector.size() };
+    DataSpace assignmentSpace(1, assignmentDims);
+    DataSet assignmentData = group.createDataSet("assignments", PredType::NATIVE_INT32, assignmentSpace);
+    assignmentData.write(assignmentVector.data(), PredType::NATIVE_INT32);
+
+    // Write out stationaries as a flattened 2D matrix padded with NaNs
+    size_t maxLen = numChar;
+    std::vector<double> buffer(20 * numChar, std::numeric_limits<double>::quiet_NaN());
+    for (size_t i = 0; i < currentTransitionProbabilityClasses.size(); i++) {
+        for (int j = 0; j < 20; j++) {
+            buffer[i * 20 + j] = currentTransitionProbabilityClasses[i].stationaryDistribution[j];
+        }
+    }
+
+    hsize_t dims[2] = { 20, maxLen };
+    DataSpace stationarySpace(2, dims);
+    DataSet stationaryData = group.createDataSet("stationaries", PredType::NATIVE_DOUBLE, stationarySpace);
+    stationaryData.write(buffer.data(), PredType::NATIVE_DOUBLE);
+}
+
+void Particle::read(const int id, const std::string& dir){
+    using namespace H5;
+    std::ostringstream groupName;
+    groupName << "state_" << id;
+
+    H5File h5File(dir, H5F_ACC_RDONLY);
+    Group group = h5File.openGroup("/" + groupName.str());
+
+    // Read Newick
+    DataSet newickData = group.openDataSet("tree");
+    StrType strDataType(PredType::C_S1, H5T_VARIABLE);
+    H5std_string newick;
+    newickData.read(newick, strDataType);
+    currentPhylogeny = Tree(newick, aln.getTaxaNames());
+
+    // Read assignments
+    DataSet assignmentData = group.openDataSet("assignments");
+    DataSpace assignmentSpace = assignmentData.getSpace();
+
+    hsize_t assignmentDims[1];
+    assignmentSpace.getSimpleExtentDims(assignmentDims, nullptr);
+    std::vector<int> assignmentVector(assignmentDims[0]);
+    assignmentData.read(assignmentVector.data(), PredType::NATIVE_INT32);
+
+    currentTransitionProbabilityClasses.clear();
+
+    // Read stationaries
+    DataSet stationaryData = group.openDataSet("stationaries");
+    DataSpace stationarySpace = stationaryData.getSpace();
+
+    hsize_t dims[2];
+    stationarySpace.getSimpleExtentDims(dims, nullptr);
+    size_t rows = dims[0];
+    size_t cols = dims[1];
+
+    std::vector<double> buffer(rows * cols);
+    stationaryData.read(buffer.data(), PredType::NATIVE_DOUBLE);
+
+    int maxClass = *std::max_element(assignmentVector.begin(), assignmentVector.end());
+
+    for (int i = 0; i <= maxClass; i++) {
+        TransitionProbabilityClass cls(numChar, baseMatrix.get());
+
+        for (size_t j = 0; j < rows; j++) {
+            double val = buffer[i * rows + j];
+            if (!std::isnan(val)) {
+                cls.stationaryDistribution[j] = val;
+            }
+        }
+
+        for (size_t m = 0; m < assignmentVector.size(); m++) {
+            if (assignmentVector[m] == i) {
+                cls.members.insert(m);
+            }
+        }
+
+        cls.recomputeEigens();
+        for(auto n : currentPhylogeny.getPostOrder()){
+            cls.recomputeTransitionProbs(n->id, n->branchLength, 1.0);
+        }
+
+        currentTransitionProbabilityClasses.push_back(cls);
+    }
+    
+    currentPhylogeny.updateAll();
+    refreshLikelihood();
+
+    oldPhylogeny = currentPhylogeny;
+
+    std::copy(rescaleBuffer.get(),
+        rescaleBuffer.get() + numChar * numNodes,
+        rescaleBuffer.get() + numChar * numNodes
+    );
+
+    std::copy(currentConditionalLikelihoodFlags.get(),
+        currentConditionalLikelihoodFlags.get() + numNodes,
+        oldConditionalLikelihoodFlags.get()
+    );
+    
+    oldTransitionProbabilityClasses = currentTransitionProbabilityClasses;
+
+    oldLnLikelihood = currentLnLikelihood;
 }

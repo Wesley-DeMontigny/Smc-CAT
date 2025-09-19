@@ -3,6 +3,7 @@
 #include <random>
 #include <cassert>
 #include <algorithm>
+#include <iostream>
 
 // Construct random tree with n tips and exponentially distributed branch lengths
 Tree::Tree(int n){
@@ -10,58 +11,65 @@ Tree::Tree(int n){
 
     auto generator = std::mt19937(std::random_device{}());
 
-    std::exponential_distribution<double> branchDist(10.0);
-
-    auto rootNode = std::unique_ptr<TreeNode>(new TreeNode {-1, "root", false, true, 0.0, nullptr, {}, false, false});
-    root = rootNode.get();
-    auto A = std::unique_ptr<TreeNode>(new TreeNode {0, "t0", true, false, branchDist(generator), root, {}, false, false});
-    auto B = std::unique_ptr<TreeNode>(new TreeNode {1, "t1", true, false, branchDist(generator), root, {}, false, false});
-    auto C = std::unique_ptr<TreeNode>(new TreeNode {2, "t2", true, false, branchDist(generator), root, {}, false, false});
+    root = addNode();
+    root->isRoot = true;
+    root->branchLength = 0.0;
+    auto A = addNode();
+    A->isTip = true;
+    A->ancestor = root;
+    A->name = "t0";
+    A->id = 0;
+    auto B = addNode();
+    B->isTip = true;
+    B->ancestor = root;
+    B->name = "t1";
+    B->id = 1;
+    auto C = addNode();
+    C->isTip = true;
+    C->ancestor = root;
+    C->name = "t2";
+    C->id = 2;
     
-    root->descendants.insert(A.get());
-    root->descendants.insert(B.get());
-    root->descendants.insert(C.get());
+    root->descendants.insert(A);
+    root->descendants.insert(B);
+    root->descendants.insert(C);
 
-    tips.push_back(A.get());
-    tips.push_back(B.get());
-    tips.push_back(C.get());
-
-    nodes.push_back(std::move(rootNode));
-    nodes.push_back(std::move(A));
-    nodes.push_back(std::move(B));
-    nodes.push_back(std::move(C));
+    tips.push_back(A);
+    tips.push_back(B);
+    tips.push_back(C);
 
     for(int i = 3; i < n; i++){
         std::uniform_int_distribution<int> dist(0,i-1);
         int randomIndex = dist(generator);
         auto randomTip = tips[randomIndex];
 
-        auto newInternal = std::unique_ptr<TreeNode>(new TreeNode {0, "", false, false, branchDist(generator), randomTip->ancestor, {}, false, false});
-        auto newTip = std::unique_ptr<TreeNode>(new TreeNode {i, "t" + std::to_string(i), true, false, branchDist(generator), newInternal.get(), {}, false, false});
-        tips.push_back(newTip.get());
+        auto newInternal = addNode();
+        newInternal->ancestor = randomTip->ancestor;
+        auto newTip = addNode();
+        newTip->id = i;
+        newTip->isTip = true;
+        newTip->name = "t" + std::to_string(i);
+        newTip->ancestor = newInternal;
+        tips.push_back(newTip);
 
         // Set the new internal node to be connected to the old ancestor and branch off with the two new nodes
-        randomTip->ancestor = newInternal.get();
-        newInternal->descendants.insert(newTip.get());
+        randomTip->ancestor = newInternal;
+        newInternal->descendants.insert(newTip);
         newInternal->descendants.insert(randomTip);
 
         // Update old ancestor by adding a new descendant and removing the old one
-        newInternal->ancestor->descendants.insert(newInternal.get());
+        newInternal->ancestor->descendants.insert(newInternal);
         auto it = newInternal->ancestor->descendants.find(randomTip);
         if (it != newInternal->ancestor->descendants.end()) {
             newInternal->ancestor->descendants.erase(it);
         }
-
-        nodes.push_back(std::move(newInternal));
-        nodes.push_back(std::move(newTip));
     }
 
     // Assign node ID to the non-tips
-    int counter = n;
-    for(int i = 0; i < nodes.size(); i++){
-        if(!nodes[i]->isTip){
-            nodes[i]->id = counter;
-            counter++;
+    int id = tips.size();
+    for(auto& n : nodes){
+        if(n->isTip == false){
+            n->id = id++;
         }
     }
 
@@ -75,80 +83,83 @@ Tree::Tree(int n){
     regeneratePostOrder();
 }
 
-// Construct from newick
-Tree::Tree(std::string s){
+Tree::Tree(std::string newick, std::vector<std::string> taxaNames){
+    std::vector<std::string> tokens = parseNewickString(newick);
 
-    auto generator = std::mt19937(std::random_device{}());
+    TreeNode* p = nullptr;
+    bool readingBranchLength = false;
 
-    std::exponential_distribution<double> branchDist(2.0);
-
-    std::string nameTokens = "";
-    std::string branchTokens = "";
-    bool readingName = false;
-    bool readingBranch = false;
-    TreeNode*currentNode = nullptr;
-    int counter = 0;
-
-    for(auto character : s){
-        if(character == '('){
-            if(currentNode == nullptr){
-                auto rootNode = std::unique_ptr<TreeNode>(new TreeNode {-1, "root", false, true, 0.0, nullptr, {}, false, false});
-                currentNode = rootNode.get();
-                root = rootNode.get();
-                nodes.push_back(std::move(rootNode));
-            }
-            else {
-                auto newInternal = std::unique_ptr<TreeNode>(new TreeNode {0, "", false, false, 0.0, currentNode, {}, false, false});
-                currentNode->descendants.insert(newInternal.get());
-                nodes.push_back(std::move(newInternal));
-                currentNode = newInternal.get();
-            }
-        }
-        else if(character == ':'){
-            readingBranch = true;
-            if(readingName){
-                auto newTip = std::unique_ptr<TreeNode>(new TreeNode {counter, nameTokens, true, false, 0.0, currentNode, {}, false, false});
-                currentNode->descendants.insert(newTip.get());
-                currentNode = newTip.get();
-                tips.push_back(newTip.get());
-                nodes.push_back(std::move(newTip));
-
-                counter++;
-                nameTokens = "";
-                readingName = false;
-            }
-        }
-        else if(character == ')' || character == ','){
-            if(readingBranch){
-                currentNode->branchLength = std::stod(branchTokens);
-                branchTokens = "";
-                readingBranch = false;
+    for(std::string tok : tokens){
+        if(tok == "("){
+            TreeNode* newNode = addNode();
+            if(p == nullptr)
+                root = newNode;
+            else{
+                p->descendants.insert(newNode);
+                newNode->ancestor = p;
             }
 
-            currentNode = currentNode->ancestor;
+            p = newNode;
         }
-        else if(character == ';'){
-            break;
+        else if(tok == ")" || tok == ","){
+            if(p->ancestor != nullptr)
+                p = p->ancestor;
+            else{
+                std::cerr << "Poorly formatted Newick! Non-root node has no ancestor!" << std::endl;
+                std::exit(1);
+            }
         }
-        else {
-            if(readingBranch){
-                branchTokens += character;
+        else if(tok == ":"){
+            readingBranchLength = true;
+        }
+        else if(tok == ";"){
+            if(p != root){
+                std::cerr << "Poorly formatted Newick! Did not end at root." << std::endl;
+                std::exit(1);
+            }
+        }
+        else{
+            if(readingBranchLength){
+                double x = atof(tok.c_str());
+                p->branchLength = x;
             }
             else{
-                readingName = true;
-                nameTokens += character;
+                //We need to trim the white space at the beginning and end of the token
+                while(tok[0] == ' ')
+                    tok.erase(0,1);
+                while(tok[tok.size()-1] == ' ')
+                    tok.erase(tok.size()-1);
+
+                // There is a weird bug causing spaces elsewhere to not be parsed correctly? I am putting this here to fix that
+                if(tok != ""){
+                    TreeNode* newNode = addNode();
+                    newNode->ancestor = p;
+                    p->descendants.insert(newNode);
+                    newNode->name = tok;
+                    newNode->isTip = true;
+                    tips.push_back(newNode);
+
+                    int taxonIndex = getTaxonIndex(tok, taxaNames);
+                    if(taxonIndex == -1){
+                        std::cerr << "Token '" + tok + "' is not in taxa names" << std::endl;
+                        std::exit(1);
+                    }
+                    newNode->id = taxonIndex;
+
+                    p = newNode;
+                }
             }
+            readingBranchLength = false;
         }
     }
 
-    for(int i = 0; i < nodes.size(); i++){
-        if(!nodes[i]->isTip){
-            nodes[i]->id = counter;
-            counter++;
+    int id = tips.size();
+    for(auto& n : nodes){
+        if(n->isTip == false){
+            n->id = id++;
         }
     }
 
-    // Sort so we can access nodes by their ID
     std::sort(nodes.begin(), nodes.end(),
         [](const std::unique_ptr<TreeNode>& a, const std::unique_ptr<TreeNode>& b) {
             return a->id < b->id;
@@ -156,19 +167,56 @@ Tree::Tree(std::string s){
     );
 
     regeneratePostOrder();
-
-    for(auto node : postOrder){
-        if(node != root){
-            if(node->branchLength <= 0.0){
-                node->branchLength = branchDist(generator); // If we aren't provided a branch length make one up
-            }
-        }
-    }
 }
 
-Tree::Tree(std::vector<std::string> tList) : Tree(tList.size()){
+TreeNode* Tree::addNode() {
+    auto generator = std::mt19937(std::random_device{}());
+    std::exponential_distribution<double> branchDist(10.0);
+
+    auto newNode = std::make_unique<TreeNode>(
+        TreeNode{0, "", false, false, branchDist(generator), nullptr, {}, false, false}
+    );
+
+    TreeNode* rawPtr = newNode.get();
+    nodes.push_back(std::move(newNode));
+
+    return rawPtr;
+}
+
+int Tree::getTaxonIndex(std::string token, std::vector<std::string> taxaNames){
+
+    for(int i = 0, n = taxaNames.size(); i < n; i++){
+        if(taxaNames[i] == token)
+            return i;
+    }
+
+    return -1;
+}
+
+std::vector<std::string> Tree::parseNewickString(std::string newick){
+    std::vector<std::string> tokens;
+    std::string str = "";
+    for(int i = 0; i < newick.length(); i++){
+        char c = newick[i];
+        if(c == '(' || c == ')' || c == ',' || c == ':' || c == ';'){
+            if(str != ""){
+                tokens.push_back(str);
+                str = "";
+            }
+
+            tokens.push_back(std::string(1, c));
+        }
+        else {
+            str += std::string(1, c);
+        }
+    }
+
+    return tokens;
+}
+
+Tree::Tree(std::vector<std::string> taxaNames) : Tree(taxaNames.size()){
     for(int i = 0; i < tips.size(); i++){
-        tips[i]->name = tList[i];
+        tips[i]->name = taxaNames[i];
     }
 }
 

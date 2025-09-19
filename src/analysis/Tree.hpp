@@ -31,8 +31,8 @@ class Tree {
     public:
         Tree(void)=delete;
         Tree(int n); // Generate random tree with n tips
-        Tree(std::string s); // Generate a tree from newick
-        Tree(std::vector<std::string> tList); // Generate a tree from a list of taxa
+        Tree(std::string s, std::vector<std::string> taxaNames); // Generate a tree from newick
+        Tree(std::vector<std::string> taxaNames); // Generate a tree from a list of taxa
         Tree(const Tree& t); // Deep copy
         Tree& operator=(const Tree& t);
         ~Tree();
@@ -58,6 +58,10 @@ class Tree {
         std::vector<TreeNode*> postOrder;
         std::vector<TreeNode*> tips;
         std::vector<std::unique_ptr<TreeNode>> nodes; // We let the nodes vector own the node unique_ptr
+        
+        TreeNode* addNode();
+        int getTaxonIndex(std::string token, std::vector<std::string> taxaNames);
+        std::vector<std::string> parseNewickString(std::string newick);
 
         void recursivePostOrderAssign(TreeNode* p);
         std::string recursiveNewickGenerate(std::string s, TreeNode* p);

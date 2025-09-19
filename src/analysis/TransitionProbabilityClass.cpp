@@ -1,6 +1,7 @@
 #include "TransitionProbabilityClass.hpp"
 #include <eigen3/Eigen/Eigenvalues>
 #include <iostream>
+
 double stationaryDirichletLogPDF(const Eigen::Vector<double, 20>& x,
                                  const Eigen::Vector<double, 20>& alpha) {
     double alpha0 = alpha.sum();
