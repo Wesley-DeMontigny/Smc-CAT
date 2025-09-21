@@ -28,7 +28,7 @@ double Mcmc::run(Particle& model, int iterations, bool tune, bool debug, int tun
             proposal = [this](Particle& m){ return m.branchMove();};
         }
         else if(moveChoice < 0.55){
-            proposal = [this](Particle& m){ return m.gibbsPartitionMove();};
+            proposal = [this, tempering](Particle& m){ return m.gibbsPartitionMove(tempering);};
             numGibbs = 1;
         }
         else{
