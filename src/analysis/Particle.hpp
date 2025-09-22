@@ -32,8 +32,9 @@ class Particle {
 
         void tune(); // Tune the proposal parameters
 
-        std::string getNewick() {return currentPhylogeny.generateNewick();}
+        std::string getNewick() { return currentPhylogeny.generateNewick(); }
         int getNumCategories() { return currentTransitionProbabilityClasses.size(); }
+        int getNumNodes() { return numNodes; }
 
         void write(const int id, const std::string& dir);
         void read(const int id, const std::string& dir);

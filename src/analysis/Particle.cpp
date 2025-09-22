@@ -197,7 +197,7 @@ double Particle::lnPrior(){
     double lnP = 0.0;
 
     double shape = (double)(numNodes - 1);
-    double rate = 1.0;
+    double rate = 10.0;
 
     double lengthSum = 0.0;
     for(auto n : currentPhylogeny.getPostOrder()){

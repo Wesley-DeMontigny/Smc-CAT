@@ -19,13 +19,15 @@ double Mcmc::run(Particle& model, int iterations, bool tune, bool debug, int tun
         double moveChoice = unif(generator);
 
         std::function<double(Particle&)> proposal;
-        int numGibbs = 5;
+        int numGibbs = 10;
 
         if(moveChoice < 0.25){
             proposal = [](Particle& m){ return m.topologyMove();};
+            numGibbs = model.getNumNodes();
         }
         else if(moveChoice < 0.5){
             proposal = [this](Particle& m){ return m.branchMove();};
+            numGibbs = model.getNumNodes();
         }
         else if(moveChoice < 0.55){
             proposal = [this, tempering](Particle& m){ return m.gibbsPartitionMove(tempering);};
@@ -33,6 +35,7 @@ double Mcmc::run(Particle& model, int iterations, bool tune, bool debug, int tun
         }
         else{
             proposal = [this](Particle& m){ return m.stationaryMove();};
+            numGibbs = std::max(model.getNumCategories(), 50);
         }
 
         for(int j = 0; j < numGibbs; j++){

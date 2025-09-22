@@ -8,6 +8,37 @@
 #include <random>
 #include <format>
 
+void computeNextStep(std::vector<double>& rawWeights, std::vector<double>& rawLogLikelihoods, 
+                     std::vector<double>& normalizedWeights, double& ESS, const double& lastESS,
+                     double& currentTemp, const double& lastTemp, const int& numParticles){
+    double maxW = *std::max_element(rawWeights.begin(), rawWeights.end());
+
+    double upperThresh = 0.8 * lastESS;
+
+    do {
+        currentTemp += 0.005;
+        if(currentTemp > 1.0)
+            currentTemp = 1.0;
+
+        double total = 0.0;
+        for(int n = 0; n < numParticles; n++){
+            rawWeights[n] = rawWeights[n] + (currentTemp - lastTemp) * rawLogLikelihoods[n]; // Adjust the weights
+            double adjustedWeight = std::exp(rawWeights[n] - maxW); // Start normalization procedure to compute ESS
+            normalizedWeights[n] = adjustedWeight;
+            total += adjustedWeight;
+        }
+
+        double weightTotal = 0.0;
+        for(int n = 0; n < numParticles; ++n){
+            normalizedWeights[n] /= total;
+            weightTotal += normalizedWeights[n] * normalizedWeights[n];
+        }
+
+        ESS = 1.0/weightTotal;
+    }
+    while(ESS > upperThresh && currentTemp != 1.0);
+}
+
 int main() {
     Alignment aln("/workspaces/FastCAT/local_testing/globin_test.fasta");
 
@@ -15,7 +46,6 @@ int main() {
     Mcmc analysis{};
 
     int numParticles = 100;
-    int numIter = 50;
     std::vector<double> rawWeights(numParticles, -1.0 * std::log(numParticles));
     std::vector<double> rawLogLikelihoods(numParticles, 0);
 
@@ -35,36 +65,22 @@ int main() {
     std::cout << "Starting SMC..." << std::endl;
     int lastID = 0;
     double lastTemp = 0.0;
-    for(int i = 1; i <= numIter; ++i){
+    double lastESS = numParticles;
+    for(int i = 1; lastTemp < 1.0; ++i){
         std::string lastFile = std::format("/workspaces/FastCAT/local_testing/particle_states.{}.h5", lastID);
         std::string newFile = std::format("/workspaces/FastCAT/local_testing/particle_states.{}.h5", i);
 
-        double currentTemp = std::pow(i/(double)numIter, 2);  // Geometric tempering
-
-        double maxW = *std::max_element(rawWeights.begin(), rawWeights.end());
-        double total = 0.0;
-        double logTotal = 0.0;
         std::vector<double> normalizedWeights(numParticles, 0.0);
-        for(int n = 0; n < numParticles; n++){
-            rawWeights[n] = rawWeights[n] + (currentTemp - lastTemp) * rawLogLikelihoods[n]; // Adjust the weights
-            logTotal += rawWeights[n];
-            double adjustedWeight = std::exp(rawWeights[n] - maxW); // Start normalization procedure to compute ESS
-            normalizedWeights[n] = adjustedWeight;
-            total += adjustedWeight;
-        }
+        double currentTemp = lastTemp;
+        double ESS = 0.0;
+        computeNextStep(rawWeights, rawLogLikelihoods, normalizedWeights, ESS, lastESS, currentTemp, lastTemp, numParticles);
 
-        double weightTotal = 0.0;
-        for(int n = 0; n < numParticles; ++n){
-            normalizedWeights[n] /= total;
-            weightTotal += normalizedWeights[n] * normalizedWeights[n];
-        }
-        double ESS = 1.0/weightTotal;
-
-        std::cout << std::format("{}\tTemp: {:.3f}\t ESS: {:.3f}\t Average Log Weight: {:.3f}", i, currentTemp, ESS, logTotal/numParticles) << std::endl;
+        std::cout << std::format("{}\tTemp: {:.3f}\t ESS: {:.3f}", i, currentTemp, ESS) << std::endl;
 
         // This part is trivially parallelizable and we should look into it.
-        if(ESS <= 0.5 * numParticles){
-            std::cout << "Starting Resampling and Rejuination" << std::endl;
+        // I don't think we want to run MCMC on the last re-weighing
+        if(ESS <= 0.5 * numParticles && currentTemp != 1.0){
+            std::cout << "Starting Resampling and Rejuvination" << std::endl;
             for(int n = 0; n < numParticles; ++n){
                 double draw = unif(gen);
                 int particle_id = numParticles-1;
@@ -85,10 +101,29 @@ int main() {
                 rawWeights[n] = -1.0 * std::log(numParticles);
             }
             lastID = i;
+            lastESS = numParticles;
+        }
+        else{
+            lastESS = ESS;
         }
 
         lastTemp = currentTemp;
     }
+    
+    int maxID = 0;
+    double maxW = -1.0 * INFINITY;
+    for(int i = 0; i < numParticles; i++){
+        if(rawWeights[i] > maxW){
+            maxID = i;
+            maxW = rawWeights[i];
+        }
+    }
+
+    std::string lastFile = std::format("/workspaces/FastCAT/local_testing/particle_states.{}.h5", lastID);
+    p.read(maxID, lastFile);
+    std::cout << p.getNumCategories() << std::endl;
+    std::cout << p.getNewick() << std::endl;
+
     
     return 0;
 }
