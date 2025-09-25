@@ -15,11 +15,26 @@
     #include <chrono>
 #endif
 
-double GammaLogPDF(double x, double shape, double rate){
+double gammaLogPDF(double x, double shape, double rate){
     if (x <= 0.0) return -INFINITY; 
     return shape * std::log(rate) + (shape - 1.0) * std::log(x) - rate * x - std::lgamma(shape);
 }
 
+double sampleBeta(double alpha, double beta, std::mt19937& gen){
+    auto alphaDist = std::gamma_distribution(alpha, 1.0);
+    auto betaDist = std::gamma_distribution(beta, 1.0);
+
+    double x = alphaDist(gen);
+    double y = betaDist(gen);
+
+    return x / (x + y);
+}
+
+double betaLogPDF(double x, double alpha, double beta){
+    if(x >= 1 || x <= 0) return -INFINITY;
+
+    return std::pow(x, alpha - 1.0) * std::pow(1.0 - x, beta - 1.0);
+}
 
 Particle::Particle(Alignment& aln) : 
                        numChar(aln.getNumChar()), currentPhylogeny(aln.getTaxaNames()), aln(aln),
@@ -38,9 +53,16 @@ Particle::Particle(Alignment& aln) :
     }
 
     // Load the data into our vectors
+    isInvariant = std::unique_ptr<double[]>(new double[numChar]);
+    invariantCharacter = std::unique_ptr<int[]>(new int[numChar]);
     for(int i = 0; i < numChar; i++){
+        int code1 = aln(0, i);
+        double invariant = 1.0;
         for(int j = 0; j < numTaxa; j++){
             int code = aln(j, i);
+            if(code != code1)
+                invariant = 0.0;
+            
             if(code < 20){
                 conditionaLikelihoodBuffer[i + j*numChar][code] = 1.0;
                 conditionaLikelihoodBuffer[i + j*numChar + numNodes*numChar][code] = 1.0;
@@ -48,7 +70,16 @@ Particle::Particle(Alignment& aln) :
             else {
                 conditionaLikelihoodBuffer[i + j*numChar] = Eigen::Vector<double, 20>::Ones(); // For ambiguous characters
                 conditionaLikelihoodBuffer[i + j*numChar + numNodes*numChar] = Eigen::Vector<double, 20>::Ones();
+                invariant = 0.0;
             }
+        }
+        isInvariant[i] = invariant;
+
+        if(invariant == 1.0){
+            invariantCharacter[i] = code1;
+        }
+        else{
+            invariantCharacter[i] = 0;
         }
     }
 
@@ -69,6 +100,10 @@ void Particle::initialize(){
     auto generator = std::mt19937(std::random_device{}());
     std::uniform_real_distribution unifDist(0.0, 1.0);
     
+    // I am just going to assume a uniform prior for now
+    currentPInvar = unifDist(generator);
+    oldPInvar = currentPInvar;
+
     // Initialize the Chinese Restaurant Process
     for(int i = 0; i < numChar; i++){
         double randomVal = unifDist(generator);
@@ -141,20 +176,25 @@ void Particle::accept(){
         oldTransitionProbabilityClasses = currentTransitionProbabilityClasses;
     }
 
+    oldPInvar = currentPInvar;
+
     acceptedNNI += (int)updateNNI;
     acceptedBranchLength += (int)updateBranchLength;
     acceptedStationary += (int)updateStationary;
     acceptedSubtreeScale += (int)updateScaleSubtree;
+    acceptedInvar += (int)updateInvar;
 
     proposedNNI += (int)updateNNI;
     proposedBranchLength += (int)updateBranchLength;
     proposedStationary += (int)updateStationary;
     proposedSubtreeScale += (int)updateScaleSubtree;
+    proposedInvar += (int)updateInvar;
 
     updateStationary = false;
     updateNNI = false;
     updateBranchLength = false;
     updateScaleSubtree = false;
+    updateInvar = false;
 }
 
 void Particle::reject(){
@@ -178,15 +218,19 @@ void Particle::reject(){
         currentTransitionProbabilityClasses = oldTransitionProbabilityClasses;
     }
 
+    currentPInvar = oldPInvar;
+
     proposedNNI += (int)updateNNI;
     proposedBranchLength += (int)updateBranchLength;
     proposedStationary += (int)updateStationary;
     proposedSubtreeScale += (int)updateScaleSubtree;
+    proposedInvar += (int)updateInvar;
 
     updateStationary = false;
     updateNNI = false;
     updateBranchLength = false;
     updateBranchLength = false;
+    updateInvar = false;
 }
 
 double Particle::lnLikelihood(){
@@ -204,7 +248,7 @@ double Particle::lnPrior(){
         lengthSum += n->branchLength;
     }
 
-    lnP += GammaLogPDF(lengthSum, shape, rate);
+    lnP += gammaLogPDF(lengthSum, shape, rate);
 
     // For now we will assume flat priors on the stationary
     lnP += std::log(dppAlpha) * currentTransitionProbabilityClasses.size();
@@ -325,11 +369,14 @@ void Particle::refreshLikelihood(){
     auto pR = conditionaLikelihoodBuffer.get() + rIndex * numChar + (dWorkingSpace * numNodes * numChar);
     double lnL = 0.0;
 
+    double invInvarScaler = 1.0 - currentPInvar;
+
     for(auto& tClass : currentTransitionProbabilityClasses){
         auto stationaryVec = (tClass.stationaryDistribution).array();
         for(int c : tClass.members){
             double siteLikelihood = (stationaryVec * (pR[c]).array()).sum();
-            lnL += std::log(siteLikelihood);
+
+            lnL += std::log(siteLikelihood * invInvarScaler + currentPInvar * stationaryVec[invariantCharacter[c]] * isInvariant[c]);
         }
     }
 
@@ -379,6 +426,26 @@ double Particle::stationaryMove(){
     currentPhylogeny.updateAll();
 
     return hastings;
+}
+
+double Particle::invarMove(){
+    auto generator = std::mt19937(std::random_device{}());
+
+    double a = invarAlpha + 1.0;
+    double b = (invarAlpha / currentPInvar) - a + 2.0;
+    double newPInvar = sampleBeta(a, b, generator);
+
+    double a2 = invarAlpha + 1.0;
+    double b2 = (invarAlpha / newPInvar) - a2 + 2.0;
+
+    double forward = betaLogPDF(newPInvar, a, b);
+    double backward = betaLogPDF(currentPInvar, a2, b2);
+
+    currentPInvar = newPInvar;
+
+    updateInvar = true;
+
+    return backward - forward;
 }
 
 double Particle::gibbsPartitionMove(double tempering){
@@ -491,10 +558,12 @@ double Particle::gibbsPartitionMove(double tempering){
         auto pR = tempCLBuffer + rIndex * bufferSize;
         std::vector<double> likelihoodVec;
 
+        double invInvarScaler = 1.0 - currentPInvar;
+
         for(int c = 0; c < catSize; c++){
             auto stationaryVec = (currentTransitionProbabilityClasses[c].stationaryDistribution).array();
             double siteLikelihood = (stationaryVec * (pR[c]).array()).sum();
-            siteLikelihood = std::log(siteLikelihood);
+            siteLikelihood = std::log(siteLikelihood * invInvarScaler + currentPInvar * stationaryVec[invariantCharacter[c]] * isInvariant[c]);
             for(auto n : postOrder){
                 siteLikelihood += (tempRescaleBuffer + bufferSize * n->id)[c];
             }
@@ -594,6 +663,20 @@ void Particle::tune(){
 
         acceptedStationary = 0;
         proposedStationary = 0;
+    }
+
+    if(proposedInvar > 0){
+        double invarRate = (double)acceptedInvar/(double)proposedInvar;
+
+        if ( invarRate > 0.33 ) {
+            invarAlpha /= (1.0 + ((invarRate-0.33)/0.67));
+        }
+        else {
+            invarAlpha *= (2.0 - invarRate/0.33);
+        }
+
+        acceptedInvar = 0;
+        proposedInvar = 0;
     }
 }
 

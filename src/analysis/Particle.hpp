@@ -28,6 +28,7 @@ class Particle {
         double topologyMove();
         double branchMove();
         double stationaryMove();
+        double invarMove();
         double gibbsPartitionMove(double tempering);
 
         void tune(); // Tune the proposal parameters
@@ -48,10 +49,13 @@ class Particle {
         int acceptedBranchLength = 0;
         int proposedSubtreeScale = 0;
         int acceptedSubtreeScale = 0;
+        int proposedInvar = 0;
+        int acceptedInvar = 0;
 
         double scaleDelta = 1.0; // Delta to scale an individual branch length
         double subtreeScaleDelta = 1.0; // Delta to scale whole subtrees
         double stationaryAlpha = 500.0; // Concentration parameter for dirichlet simplex proposals
+        double invarAlpha = 100.0; // Concentration parameter for the beta simplex proposals on invar
     private:
         Tree currentPhylogeny; // We need the phylogenies to be evaluated before the numNodes
         Tree oldPhylogeny;
@@ -69,6 +73,7 @@ class Particle {
         bool updateNNI = false;
         bool updateBranchLength = false;
         bool updateScaleSubtree = false;
+        bool updateInvar = false;
 
         std::unique_ptr<uint8_t[]> currentConditionalLikelihoodFlags; // To stop us from having to swap the whole memory space, we just keep a working space flag for each node
         std::unique_ptr<uint8_t[]> oldConditionalLikelihoodFlags; // Swap back flags if rejected
@@ -76,6 +81,11 @@ class Particle {
         std::unique_ptr<Eigen::Vector<double, 20>[]> conditionaLikelihoodBuffer; // Contains all the conditional likelihoods for each node (rescaled). Should be size NumSites x NumNodes x 2
         std::unique_ptr<double[]> rescaleBuffer; // Contains all the rescale values we computed. Should be size NumNodes x NumSites x 2.
         
+        std::unique_ptr<double[]> isInvariant;
+        std::unique_ptr<int[]> invariantCharacter;
+        double currentPInvar = 0.1;
+        double oldPInvar = 0.1;
+
         std::vector<TransitionProbabilityClass> currentTransitionProbabilityClasses; // Contains all of the current DPP categories
         std::vector<TransitionProbabilityClass> oldTransitionProbabilityClasses; // Memory of the DPP categories to restore
         double dppAlpha = 0.5;

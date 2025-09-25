@@ -9,6 +9,7 @@ include_directories(${PROJECT_SOURCE_DIR})
 
 find_package (Eigen3 3.4 REQUIRED NO_MODULE)
 find_package(HDF5 REQUIRED COMPONENTS CXX)
+find_package(OpenMP REQUIRED)
 
 file(GLOB_RECURSE SOURCES "${PROJECT_SOURCE_DIR}/src/*.cpp")
 list(REMOVE_ITEM SOURCES "${PROJECT_SOURCE_DIR}/src/main.cpp")
@@ -16,10 +17,11 @@ add_library(fastcat_lib ${SOURCES})
 target_include_directories(fastcat_lib PUBLIC
     ${PROJECT_SOURCE_DIR}/src
 )
-target_link_libraries(fastcat_lib PUBLIC Eigen3::Eigen HDF5::HDF5)
+target_link_libraries(fastcat_lib PUBLIC Eigen3::Eigen HDF5::HDF5 OpenMP::OpenMP_CXX)
 
 add_executable(main src/main.cpp)
-target_link_libraries(main PRIVATE fastcat_lib)
+target_link_libraries(main PRIVATE fastcat_lib OpenMP::OpenMP_CXX)
+
 
 target_compile_options(fastcat_lib PRIVATE -march=native -O3)
 target_compile_options(main PRIVATE -march=native -O3)
