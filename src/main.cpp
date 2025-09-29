@@ -78,14 +78,16 @@ void computeNextStep(std::vector<double>& rawWeights, std::vector<double>& rawLo
 int main() {
     int numParticles = 500;
     int numThreads = omp_get_max_threads();
+    bool posteriorTempering = false;
 
     Alignment aln("/workspaces/FastCAT/local_testing/globin_test.fasta");
+    int numChar = aln.getNumChar();
 
     std::cout << std::format("Utilizing {} threads for working with {}", numThreads, numParticles) << std::endl;
     std::vector<Particle> threadParticles;
     threadParticles.reserve(numThreads);
     for (int t = 0; t < numThreads; ++t) {
-        threadParticles.emplace_back(aln);
+        threadParticles.emplace_back(aln, posteriorTempering);
     }
 
     Mcmc analysis{};
@@ -93,93 +95,209 @@ int main() {
     std::vector<int> oldShardAssignments(numParticles, 0);
     std::vector<int> currentShardAssignments(numParticles, 0);
     std::vector<double> rawWeights(numParticles, -1.0 * std::log(numParticles));
-    std::vector<double> rawLogLikelihoods(numParticles, 0);
 
     std::mt19937 gen = std::mt19937(std::random_device{}());
     std::uniform_real_distribution systematicUnif(0.0, 1.0/numParticles);
 
-    // Particle initialization
-    std::cout << "Initializing SMC..." << std::endl;
-    Particle& initP = threadParticles[0];
-    for(int n = 0; n < numParticles; ++n){
-        initP.write(n, "/workspaces/FastCAT/local_testing/particle_states.0.s0.h5");
-        rawLogLikelihoods[n] = initP.lnLikelihood();
-        initP.initialize();
-    }
-    std::cout << "Initialized Particles..." << std::endl;
+    if(posteriorTempering){
+        std::vector<double> rawLogLikelihoods(numParticles, 0);
 
-    // SMC algorithm
-    std::cout << "Starting SMC..." << std::endl;
-    int lastID = 0;
-    double lastTemp = 0.0;
-    for(int i = 1; lastTemp < 1.0; ++i){
-        std::vector<double> normalizedWeights(numParticles, 0.0);
-        double currentTemp = lastTemp;
-        double ESS = 0.0;
-        computeNextStep(rawWeights, rawLogLikelihoods, normalizedWeights, ESS, currentTemp, lastTemp, numParticles);
+        // Particle initialization
+        std::cout << "Initializing SMC..." << std::endl;
+        Particle& initP = threadParticles[0];
+        for(int n = 0; n < numParticles; ++n){
+            initP.setInvariance(0.0);
+            initP.write(n, "/workspaces/FastCAT/local_testing/particle_states.0.s0.h5");
+            rawLogLikelihoods[n] = initP.lnLikelihood();
+            initP.initialize(true);
+        }
+        std::cout << "Initialized Particles..." << std::endl;
 
-        std::cout << std::format("{}\tTemp: {:.5f}\t ESS: {:.5f}", i, currentTemp, ESS) << std::endl;
+        // SMC algorithm
+        std::cout << "Starting SMC..." << std::endl;
+        int lastID = 0;
+        double lastTemp = 0.0;
+        for(int i = 1; lastTemp < 1.0; ++i){
+            std::vector<double> normalizedWeights(numParticles, 0.0);
+            double currentTemp = lastTemp;
+            double ESS = 0.0;
+            computeNextStep(rawWeights, rawLogLikelihoods, normalizedWeights, ESS, currentTemp, lastTemp, numParticles);
 
-        if(ESS <= 0.6 * numParticles && currentTemp != 1.0){
-            std::cout << "Resampling Particles..." << std::endl;
+            std::cout << std::format("{}\tTemp: {:.5f}\t ESS: {:.5f}", i, currentTemp, ESS) << std::endl;
 
-            // Systematic resamplign scheme (has less variance than multinomial resampling)
-            double u = systematicUnif(gen);
-            std::vector<int> assignments;
-            assignments.reserve(numParticles);
-            double cumulative = normalizedWeights[0];
-            int currentWeight = 0;
-            double ruler = u;
-            double increment = 1.0/numParticles;
-            while(assignments.size() < numParticles){
-                if(ruler <= cumulative){
-                    assignments.push_back(currentWeight);
-                    ruler += increment;
+            if(ESS <= 0.6 * numParticles && currentTemp != 1.0){
+                std::cout << "Resampling Particles..." << std::endl;
+
+                // Systematic resamplign scheme (has less variance than multinomial resampling)
+                double u = systematicUnif(gen);
+                std::vector<int> assignments;
+                assignments.reserve(numParticles);
+                double cumulative = normalizedWeights[0];
+                int currentWeight = 0;
+                double ruler = u;
+                double increment = 1.0/numParticles;
+                while(assignments.size() < numParticles){
+                    if(ruler <= cumulative){
+                        assignments.push_back(currentWeight);
+                        ruler += increment;
+                    }
+                    else {
+                        cumulative += normalizedWeights[++currentWeight];
+                    }
                 }
-                else {
-                    cumulative += normalizedWeights[++currentWeight];
+
+                std::cout << "Rejuvinating Particles..." << std::endl;
+                #pragma omp parallel for schedule(dynamic)
+                for (int n = 0; n < numParticles; ++n) {
+                    int threadID = omp_get_thread_num();
+                    Particle& p = threadParticles[threadID];
+                    int particleID = assignments[n];
+
+                    std::string lastFile = std::format("/workspaces/FastCAT/local_testing/particle_states.{}.s{}.h5", lastID, oldShardAssignments[particleID]);
+                    std::string newFile = std::format("/workspaces/FastCAT/local_testing/particle_states.{}.s{}.h5", i, threadID);
+
+                    p.read(particleID, lastFile);
+
+                    analysis.run(p, 10, false, false, 1, 1, currentTemp, false);
+                    p.gibbsPartitionMove(currentTemp, numChar);
+                    p.refreshLikelihood();
+                    p.accept();
+                    rawLogLikelihoods[n] = p.lnLikelihood();
+                    rawWeights[n] = -1.0 * std::log(numParticles);
+
+                    currentShardAssignments[n] = threadID;
+                    p.write(n, newFile);
+                }
+                lastID = i;
+                std::swap(currentShardAssignments, oldShardAssignments);
+                
+                for(Particle& p : threadParticles){
+                    p.tune();
                 }
             }
 
-            std::cout << "Rejuvinating Particles..." << std::endl;
+            lastTemp = currentTemp;
+        }
+        
+        int maxID = 0;
+        double maxW = -1.0 * INFINITY;
+        for(int i = 0; i < numParticles; i++){
+            if(rawWeights[i] > maxW){
+                maxID = i;
+                maxW = rawWeights[i];
+            }
+        }
+    }
+    else {
+        // Particle initialization
+        std::cout << "Initializing SMC..." << std::endl;
+        Particle& initP = threadParticles[0];
+        for(int n = 0; n < numParticles; ++n){
+            initP.setInvariance(0.0);
+            initP.write(n, "/workspaces/FastCAT/local_testing/particle_states.0.s0.h5");
+            initP.initialize(false);
+        }
+        std::cout << "Initialized Particles..." << std::endl;
+
+        // SMC algorithm
+        std::cout << "Starting SMC..." << std::endl;
+        for(int i = 1; i < numChar; ++i){
+            std::vector<double> normalizedWeights(numParticles, 0.0);
+            double ESS = 0.0;
+
+            std::cout << "Computing new weights and assignments..." << std::endl;
             #pragma omp parallel for schedule(dynamic)
             for (int n = 0; n < numParticles; ++n) {
                 int threadID = omp_get_thread_num();
                 Particle& p = threadParticles[threadID];
-                int particleID = assignments[n];
 
-                std::string lastFile = std::format("/workspaces/FastCAT/local_testing/particle_states.{}.s{}.h5", lastID, oldShardAssignments[particleID]);
-                std::string newFile = std::format("/workspaces/FastCAT/local_testing/particle_states.{}.s{}.h5", i, threadID);
+                std::string sampleFile = std::format("/workspaces/FastCAT/local_testing/particle_states.{}.s{}.h5", i-1, oldShardAssignments[n]);
+                std::string weightingFile = std::format("/workspaces/FastCAT/local_testing/particle_states.{}.w{}.h5", i, threadID);
 
-                p.read(particleID, lastFile);
-
-                analysis.run(p, 5, false, false, 1, 1, currentTemp);
-                p.gibbsPartitionMove(currentTemp);
-                p.refreshLikelihood();
-                p.accept();
-                rawLogLikelihoods[n] = p.lnLikelihood();
-                rawWeights[n] = -1.0 * std::log(numParticles);
+                p.read(n, sampleFile);
+                double assignmentProbs = p.assignSite(1.0, i-1);
+                double siteLnLikelihood = p.computeSiteLikelihood(1.0, i-1);
+                rawWeights[n] += std::log(assignmentProbs) + siteLnLikelihood;
 
                 currentShardAssignments[n] = threadID;
-                p.write(n, newFile);
+                p.write(n, weightingFile);
             }
-            lastID = i;
             std::swap(currentShardAssignments, oldShardAssignments);
-            
-            for(Particle& p : threadParticles){
-                p.tune();
+
+            double maxW = *std::max_element(rawWeights.begin(), rawWeights.end());
+            double total = 0.0;
+            for (int n = 0; n < numParticles; n++) {
+                normalizedWeights[n] = std::exp(rawWeights[n] - maxW);
+                total += normalizedWeights[n];
+            }
+
+            double sumSq = 0.0;
+            for (int n = 0; n < numParticles; n++) {
+                normalizedWeights[n] /= total;
+                sumSq += normalizedWeights[n] * normalizedWeights[n];
+            }
+
+            ESS = 1.0 / sumSq;
+
+            std::cout << std::format("{}\t ESS: {:.5f}", i, ESS) << std::endl;
+
+            if(ESS <= 0.6 * numParticles && i != numChar){
+                std::cout << "Resampling Particles..." << std::endl;
+
+                // Systematic resamplign scheme (has less variance than multinomial resampling)
+                double u = systematicUnif(gen);
+                std::vector<int> assignments;
+                assignments.reserve(numParticles);
+                double cumulative = normalizedWeights[0];
+                int currentWeight = 0;
+                double ruler = u;
+                double increment = 1.0/numParticles;
+                while(assignments.size() < numParticles){
+                    if(ruler <= cumulative){
+                        assignments.push_back(currentWeight);
+                        ruler += increment;
+                    }
+                    else {
+                        cumulative += normalizedWeights[++currentWeight];
+                    }
+                }
+
+                std::cout << "Rejuvinating Particles..." << std::endl;
+                #pragma omp parallel for schedule(dynamic)
+                for (int n = 0; n < numParticles; ++n) {
+                    int threadID = omp_get_thread_num();
+                    Particle& p = threadParticles[threadID];
+                    int particleID = assignments[n];
+
+                    std::string weightingFile = std::format("/workspaces/FastCAT/local_testing/particle_states.{}.w{}.h5", i, oldShardAssignments[particleID]);
+                    std::string sampleFile = std::format("/workspaces/FastCAT/local_testing/particle_states.{}.s{}.h5", i, threadID);
+
+                    p.read(particleID, weightingFile);
+
+                    analysis.run(p, 10, false, false, 1, 1, 1.0, false);
+                    p.gibbsPartitionMove(1.0, i);
+                    p.refreshLikelihood();
+                    p.accept();
+                    rawWeights[n] = -1.0 * std::log(numParticles);
+
+                    currentShardAssignments[n] = threadID;
+                    p.write(n, sampleFile);
+                }
+                std::swap(currentShardAssignments, oldShardAssignments);
+                
+                for(Particle& p : threadParticles){
+                    p.tune();
+                }
             }
         }
-
-        lastTemp = currentTemp;
-    }
-    
-    int maxID = 0;
-    double maxW = -1.0 * INFINITY;
-    for(int i = 0; i < numParticles; i++){
-        if(rawWeights[i] > maxW){
-            maxID = i;
-            maxW = rawWeights[i];
+        
+        int maxID = 0;
+        double maxW = -1.0 * INFINITY;
+        for(int i = 0; i < numParticles; i++){
+            if(rawWeights[i] > maxW){
+                maxID = i;
+                maxW = rawWeights[i];
+            }
         }
     }
 

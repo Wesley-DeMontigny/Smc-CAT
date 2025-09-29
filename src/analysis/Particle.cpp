@@ -36,7 +36,7 @@ double betaLogPDF(double x, double alpha, double beta){
     return std::pow(x, alpha - 1.0) * std::pow(1.0 - x, beta - 1.0);
 }
 
-Particle::Particle(Alignment& aln) : 
+Particle::Particle(Alignment& aln, bool fullInitialization) : 
                        numChar(aln.getNumChar()), currentPhylogeny(aln.getTaxaNames()), aln(aln),
                        oldPhylogeny(currentPhylogeny), numNodes(currentPhylogeny.getNumNodes()), numTaxa(aln.getNumTaxa()) {
 
@@ -83,10 +83,10 @@ Particle::Particle(Alignment& aln) :
         }
     }
 
-    initialize();
+    initialize(fullInitialization);
 }
 
-void Particle::initialize(){
+void Particle::initialize(bool full){
     // We waste a little bit of compute the first time we initilize this particle object, but this is easiest right now
     currentPhylogeny = Tree(aln.getTaxaNames());
 
@@ -104,39 +104,42 @@ void Particle::initialize(){
     currentPInvar = unifDist(generator);
     oldPInvar = currentPInvar;
 
-    // Initialize the Chinese Restaurant Process
-    for(int i = 0; i < numChar; i++){
-        double randomVal = unifDist(generator);
-        double total = dppAlpha/(i + dppAlpha);
+    // Only do these computations if we are initializing with the full dataset
+    if(full){
+        // Initialize the Chinese Restaurant Process
+        for(int i = 0; i < numChar; i++){
+            double randomVal = unifDist(generator);
+            double total = dppAlpha/(i + dppAlpha);
 
-        // If new category
-        if(total > randomVal){
-            auto newCat = TransitionProbabilityClass(numNodes, baseMatrix.get());
-            newCat.members.insert(i);
-            currentTransitionProbabilityClasses.push_back(newCat);
-            continue;
-        }
-
-        // If old category
-        for(auto &c : currentTransitionProbabilityClasses){
-            total += c.members.size()/(i+dppAlpha);
-
+            // If new category
             if(total > randomVal){
-                c.members.insert(i);
-                break;
+                auto newCat = TransitionProbabilityClass(numNodes, baseMatrix.get());
+                newCat.members.insert(i);
+                currentTransitionProbabilityClasses.push_back(newCat);
+                continue;
+            }
+
+            // If old category
+            for(auto &c : currentTransitionProbabilityClasses){
+                total += c.members.size()/(i+dppAlpha);
+
+                if(total > randomVal){
+                    c.members.insert(i);
+                    break;
+                }
             }
         }
-    }
 
-    for(auto& c : currentTransitionProbabilityClasses){
-        c.recomputeEigens();
-        for(auto n : currentPhylogeny.getPostOrder()){
-            c.recomputeTransitionProbs(n->id, n->branchLength, 1.0);
+        for(auto& c : currentTransitionProbabilityClasses){
+            c.recomputeEigens();
+            for(auto n : currentPhylogeny.getPostOrder()){
+                c.recomputeTransitionProbs(n->id, n->branchLength, 1.0);
+            }
         }
-    }
 
-    currentPhylogeny.updateAll();
-    refreshLikelihood();
+        currentPhylogeny.updateAll();
+        refreshLikelihood();
+    }
 
     oldPhylogeny = currentPhylogeny;
 
@@ -253,17 +256,25 @@ double Particle::lnPrior(){
     // For now we will assume flat priors on the stationary
     lnP += std::log(dppAlpha) * currentTransitionProbabilityClasses.size();
 
+    int totalActive = 0;
     for (auto& c : currentTransitionProbabilityClasses) {
-        lnP += std::lgamma(c.members.size());
+        int memberCount = c.members.size();
+        lnP += std::lgamma(memberCount);
+        totalActive += memberCount;
     }
 
-    lnP += std::lgamma(dppAlpha) - std::lgamma(dppAlpha + numChar);
+    lnP += std::lgamma(dppAlpha) - std::lgamma(dppAlpha + totalActive);
 
     return lnP;
 }
 
 void Particle::refreshLikelihood(){
     auto postOrder = currentPhylogeny.getPostOrder();
+
+    int activeSites = 0;
+    for(auto& c : currentTransitionProbabilityClasses){
+        activeSites += c.members.size();
+    }
 
     #if TIME_PROFILE==1
     std::chrono::steady_clock::time_point preTPUpdate = std::chrono::steady_clock::now();
@@ -314,7 +325,7 @@ void Particle::refreshLikelihood(){
         uint8_t nWorkingSpace = currentConditionalLikelihoodFlags[nIndex];
         if(n->updateCL && !n->isTip){ // Tips never need their CL buffer updated because it just defined by the data
             auto pN = conditionaLikelihoodBuffer.get() + nIndex * numChar + (nWorkingSpace * numNodes * numChar);
-            for(int i = 0; i < numChar; i++){
+            for(int i = 0; i < activeSites; i++){
                 pN[i] = Eigen::Vector<double, 20>::Ones();
             }
 
@@ -341,9 +352,9 @@ void Particle::refreshLikelihood(){
                 }
             }
             double* rescalePointer = rescaleBuffer.get() + numChar * nIndex;
-            std::fill(rescalePointer, rescalePointer + numChar, 0.0);
+            std::fill(rescalePointer, rescalePointer + activeSites, 0.0);
 
-            for(int c = 0; c < numChar; c++){
+            for(int c = 0; c < activeSites; c++){
                 double max = pN->maxCoeff();
                 *pN /= max;
                 *rescalePointer = std::log(max);
@@ -380,6 +391,7 @@ void Particle::refreshLikelihood(){
         }
     }
 
+    // It is hard to make this respect only active sites since it is ordered by node
     double* rescalePointer = rescaleBuffer.get();
     for(int i = 0; i < numNodes * numChar; i++){
         lnL += *rescalePointer;
@@ -387,6 +399,86 @@ void Particle::refreshLikelihood(){
     }
 
     currentLnLikelihood = lnL;
+}
+
+double Particle::computeSiteLikelihood(double tempering, int site){
+    auto generator = std::mt19937(std::random_device{}());
+    auto unifDist = std::uniform_real_distribution(0.0, 1.0);
+
+    auto postOrder = currentPhylogeny.getPostOrder();
+
+    // We are assuming the site has already been assigned and that the transition probability has been properly updated
+    int siteAssignment = -1;
+    for (int i = 0; i < currentTransitionProbabilityClasses.size(); i++) {
+        if (currentTransitionProbabilityClasses[i].members.count(site)) {
+            siteAssignment = i;
+            break;
+        }
+    }
+    assert(siteAssignment >= 0);
+
+    int bufferSize = 1; // Until we include gamma site rate heterogeneity
+    auto tempCLBuffer = new Eigen::Vector<double, 20>[numNodes * bufferSize];
+    auto tempRescaleBuffer = new double[numNodes * bufferSize];
+    for(int i = 0; i < numNodes * bufferSize; i++){
+        tempRescaleBuffer[i] = 0.0;
+        tempCLBuffer[i] = Eigen::Vector<double, 20>::Zero();
+    }
+
+    #if TIME_PROFILE==1
+    std::chrono::steady_clock::time_point preIter = std::chrono::steady_clock::now();
+    #endif
+
+    // Run the pruning algorithm
+    for(auto n : postOrder){
+        int nIndex = n->id;
+        auto pN = tempCLBuffer + nIndex * bufferSize;
+        if(!n->isTip){
+            for(int i = 0; i < bufferSize; i++){
+                pN[i] = Eigen::Vector<double, 20>::Ones();
+            }
+
+            for(auto d : n->descendants){
+                int dIndex = d->id;
+
+                auto pD = tempCLBuffer+ dIndex * bufferSize;
+
+                Eigen::Matrix<double,20,1> workBuffer;
+
+                Eigen::Matrix<double, 20, 20>& P = currentTransitionProbabilityClasses[siteAssignment].transitionProbabilities[dIndex];
+                workBuffer.noalias() = P * *pD;
+                (*pN).array() *= workBuffer.array();
+            }
+            double* rescalePointer = tempRescaleBuffer + bufferSize * nIndex;
+            std::fill(rescalePointer, rescalePointer + bufferSize, 0.0);
+
+            double max = pN->maxCoeff();
+            *pN /= max;
+            *rescalePointer = std::log(max);
+        }
+        else{
+            *pN = *(conditionaLikelihoodBuffer.get() + nIndex * numChar + site);
+        }
+    }
+
+    int rIndex = currentPhylogeny.getRoot()->id;
+    auto pR = tempCLBuffer + rIndex * bufferSize;
+    std::vector<double> likelihoodVec;
+
+    double invInvarScaler = 1.0 - currentPInvar;
+
+    auto stationaryVec = (currentTransitionProbabilityClasses[siteAssignment].stationaryDistribution).array();
+    double siteLikelihood = (stationaryVec * (*pR).array()).sum();
+    siteLikelihood = std::log(siteLikelihood * invInvarScaler + currentPInvar * stationaryVec[invariantCharacter[siteAssignment]] * isInvariant[siteAssignment]);
+    for(int i = 0; i < numNodes * bufferSize; i++){
+        siteLikelihood += tempRescaleBuffer[i];
+    }
+    siteLikelihood *= tempering;
+
+    delete [] tempCLBuffer;
+    delete [] tempRescaleBuffer;
+
+    return siteLikelihood;
 }
 
 double Particle::topologyMove(){
@@ -448,19 +540,19 @@ double Particle::invarMove(){
     return backward - forward;
 }
 
-double Particle::gibbsPartitionMove(double tempering){
+double Particle::gibbsPartitionMove(double tempering, int range){
     auto generator = std::mt19937(std::random_device{}());
     auto unifDist = std::uniform_real_distribution(0.0, 1.0);
 
     auto postOrder = currentPhylogeny.getPostOrder();
 
     int numAux = 5;
-    int numIter = numChar;
+    int numIter = range;
 
     double alphaSplit = std::log(dppAlpha/numAux);
 
     int bufferSize = (4 * numAux + currentTransitionProbabilityClasses.size());
-    auto tempCLBuffer = new Eigen::Vector<double, 20>[numChar * bufferSize];
+    auto tempCLBuffer = new Eigen::Vector<double, 20>[numNodes * bufferSize];
     auto tempRescaleBuffer = new double[numNodes * bufferSize];
     for(int i = 0; i < numNodes * bufferSize; i++){
         tempRescaleBuffer[i] = 0.0;
@@ -472,7 +564,7 @@ double Particle::gibbsPartitionMove(double tempering){
         #if TIME_PROFILE==1
         std::chrono::steady_clock::time_point preIter = std::chrono::steady_clock::now();
         #endif
-        int randomSite = (int)(unifDist(generator) * numChar);
+        int randomSite = (int)(unifDist(generator) * range);
         int originalCategory = -1;
         for (int i = 0; i < currentTransitionProbabilityClasses.size(); i++) {
             if (currentTransitionProbabilityClasses[i].members.count(randomSite)) {
@@ -505,7 +597,7 @@ double Particle::gibbsPartitionMove(double tempering){
             delete [] tempRescaleBuffer;
 
             bufferSize = (4 * numAux + catSize);
-            tempCLBuffer = new Eigen::Vector<double, 20>[numChar * bufferSize];
+            tempCLBuffer = new Eigen::Vector<double, 20>[numNodes * bufferSize];
             tempRescaleBuffer = new double[numNodes * bufferSize];
             for(int i = 0; i < numNodes * bufferSize; i++){
                 tempRescaleBuffer[i] = 0.0;
@@ -518,7 +610,7 @@ double Particle::gibbsPartitionMove(double tempering){
             int nIndex = n->id;
             auto pN = tempCLBuffer + nIndex * bufferSize;
             if(!n->isTip){
-                for(int i = 0; i < numChar; i++){
+                for(int i = 0; i < bufferSize; i++){
                     pN[i] = Eigen::Vector<double, 20>::Ones();
                 }
 
@@ -587,7 +679,6 @@ double Particle::gibbsPartitionMove(double tempering){
         double categoryDraw = total * unifDist(generator);
 
         total = 0.0;
-        bool assigned = false;
         for(int i = 0; i < likelihoodVec.size(); i++){
             total += likelihoodVec[i];
             if(total > categoryDraw){
@@ -622,6 +713,157 @@ double Particle::gibbsPartitionMove(double tempering){
     delete [] tempRescaleBuffer;
 
     return INFINITY;
+}
+
+double Particle::assignSite(double tempering, int site){
+    auto generator = std::mt19937(std::random_device{}());
+    auto unifDist = std::uniform_real_distribution(0.0, 1.0);
+
+    auto postOrder = currentPhylogeny.getPostOrder();
+
+    int numAux = 5;
+
+    double alphaSplit = std::log(dppAlpha/numAux);
+
+    int bufferSize = (4 * numAux + currentTransitionProbabilityClasses.size());
+    auto tempCLBuffer = new Eigen::Vector<double, 20>[numNodes * bufferSize];
+    auto tempRescaleBuffer = new double[numNodes * bufferSize];
+    for(int i = 0; i < numNodes * bufferSize; i++){
+        tempRescaleBuffer[i] = 0.0;
+        tempCLBuffer[i] = Eigen::Vector<double, 20>::Zero();
+    }
+
+    #if TIME_PROFILE==1
+    std::chrono::steady_clock::time_point preIter = std::chrono::steady_clock::now();
+    #endif
+
+    for(int n = 0; n < numAux; n++){
+        auto auxCat = TransitionProbabilityClass(numNodes, baseMatrix.get());
+        auxCat.recomputeEigens();
+        for(auto n : postOrder){
+            n->updateTP = false;
+            auxCat.recomputeTransitionProbs(n->id, n->branchLength, 1.0);
+        }
+        currentTransitionProbabilityClasses.push_back(auxCat);
+    }
+
+    int catSize = currentTransitionProbabilityClasses.size();
+
+    // We try to give ourselves a big enough buffer at the beginning, but if it gets too small, update it.
+    if(bufferSize < catSize){
+        delete [] tempCLBuffer;
+        delete [] tempRescaleBuffer;
+
+        bufferSize = (4 * numAux + catSize);
+        tempCLBuffer = new Eigen::Vector<double, 20>[numNodes * bufferSize];
+        tempRescaleBuffer = new double[numNodes * bufferSize];
+        for(int i = 0; i < numNodes * bufferSize; i++){
+            tempRescaleBuffer[i] = 0.0;
+            tempCLBuffer[i] = Eigen::Vector<double, 20>::Zero();
+        }
+    }
+
+    // Run the pruning algorithm
+    for(auto n : postOrder){
+        int nIndex = n->id;
+        auto pN = tempCLBuffer + nIndex * bufferSize;
+        if(!n->isTip){
+            for(int i = 0; i < bufferSize; i++){
+                pN[i] = Eigen::Vector<double, 20>::Ones();
+            }
+
+            for(auto d : n->descendants){
+                int dIndex = d->id;
+
+                auto pD = tempCLBuffer+ dIndex * bufferSize;
+
+                Eigen::Matrix<double,20,1> workBuffer;
+
+                for(int c = 0; c < catSize; c++){
+                    Eigen::Matrix<double, 20, 20>& P = currentTransitionProbabilityClasses[c].transitionProbabilities[dIndex];
+                    workBuffer.noalias() = P * pD[c];
+                    pN[c].array() *= workBuffer.array();
+                }
+            }
+            double* rescalePointer = tempRescaleBuffer + bufferSize * nIndex;
+            std::fill(rescalePointer, rescalePointer + bufferSize, 0.0);
+
+            for(int c = 0; c < catSize; c++){
+                double max = pN->maxCoeff();
+                *pN /= max;
+                *rescalePointer = std::log(max);
+
+                rescalePointer++;
+                pN++;
+            }
+        }
+        else{
+            for(int c = 0; c < catSize; c++){
+                pN[c] = *(conditionaLikelihoodBuffer.get() + nIndex * numChar + site);
+            }
+        }
+    }
+
+    int rIndex = currentPhylogeny.getRoot()->id;
+    auto pR = tempCLBuffer + rIndex * bufferSize;
+    std::vector<double> likelihoodVec;
+
+    double invInvarScaler = 1.0 - currentPInvar;
+
+    for(int c = 0; c < catSize; c++){
+        auto stationaryVec = (currentTransitionProbabilityClasses[c].stationaryDistribution).array();
+        double siteLikelihood = (stationaryVec * (pR[c]).array()).sum();
+        siteLikelihood = std::log(siteLikelihood * invInvarScaler + currentPInvar * stationaryVec[invariantCharacter[c]] * isInvariant[c]);
+        for(auto n : postOrder){
+            siteLikelihood += (tempRescaleBuffer + bufferSize * n->id)[c];
+        }
+        siteLikelihood *= tempering;
+        if(c < catSize - numAux){
+            likelihoodVec.push_back(siteLikelihood + std::log(currentTransitionProbabilityClasses[c].members.size()));
+        }
+        else {
+            likelihoodVec.push_back(siteLikelihood + alphaSplit);
+        }
+    }
+
+    double maxL = *std::max_element(likelihoodVec.begin(), likelihoodVec.end());
+    double total = 0.0;
+    for(double& d : likelihoodVec){
+        d -= maxL;
+        d = std::exp(d);
+        total += d;
+    }
+
+    double categoryDraw = total * unifDist(generator);
+
+    total = 0.0;
+    int assignment = 0;
+    for(int i = 0; i < likelihoodVec.size(); i++){
+        total += likelihoodVec[i];
+        if(total > categoryDraw){
+            assignment = i;
+            if(i < catSize - numAux) { //It already exists
+                for(int j = 0; j < numAux; j++)
+                    currentTransitionProbabilityClasses.pop_back();
+                currentTransitionProbabilityClasses[i].members.insert(site);
+            }
+            else {
+                // Delete the num aux other than the one we want.
+                for (int c = catSize - 1; c >= catSize - numAux; --c) {
+                    if (c != i) {
+                        currentTransitionProbabilityClasses.erase(currentTransitionProbabilityClasses.begin() + c);
+                    }
+                }
+                currentTransitionProbabilityClasses[currentTransitionProbabilityClasses.size()-1].members.insert(site);
+            }
+            break;
+        }
+    }
+
+    delete [] tempCLBuffer;
+    delete [] tempRescaleBuffer;
+
+    return likelihoodVec[assignment];
 }
 
 void Particle::tune(){
@@ -718,6 +960,10 @@ void Particle::write(const int id, const std::string& dir){
     DataSet assignmentData = group.createDataSet("assignments", PredType::NATIVE_INT32, assignmentSpace);
     assignmentData.write(assignmentVector.data(), PredType::NATIVE_INT32);
 
+    DataSpace scalarSpace(H5S_SCALAR);
+    DataSet pInvarDataset = group.createDataSet("pInvar", PredType::NATIVE_DOUBLE, scalarSpace);
+    pInvarDataset.write(&currentPInvar, PredType::NATIVE_DOUBLE);
+
     // Write out stationaries as a flattened 2D matrix padded with NaNs
     size_t maxLen = numChar;
     std::vector<double> buffer(20 * numChar, std::numeric_limits<double>::quiet_NaN());
@@ -751,6 +997,9 @@ void Particle::read(const int id, const std::string& dir){
     // Read assignments
     DataSet assignmentData = group.openDataSet("assignments");
     DataSpace assignmentSpace = assignmentData.getSpace();
+
+    DataSet pInvarData = group.openDataSet("pInvar");
+    pInvarData.read(&currentPInvar, PredType::NATIVE_DOUBLE);
 
     hsize_t assignmentDims[1];
     assignmentSpace.getSimpleExtentDims(assignmentDims, nullptr);
@@ -812,6 +1061,8 @@ void Particle::read(const int id, const std::string& dir){
         oldConditionalLikelihoodFlags.get()
     );
     
+    oldPInvar = currentPInvar;
+
     oldTransitionProbabilityClasses = currentTransitionProbabilityClasses;
 
     oldLnLikelihood = currentLnLikelihood;

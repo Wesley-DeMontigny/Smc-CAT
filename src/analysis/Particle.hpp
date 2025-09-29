@@ -13,11 +13,12 @@ class Alignment;
 class Particle {
     public:
         Particle(void)=delete;
-        Particle(Alignment& aln);
+        Particle(Alignment& aln, bool fullInitialization=true);
 
-        void initialize();
+        void initialize(bool full=true);
 
-        void refreshLikelihood();
+        void refreshLikelihood(); // Refreshes the likelihood and stores it in the currentLnLikelihood variable
+        double computeSiteLikelihood(double tempering, int site); // Computes and returns the likelihood a site
 
         double lnPrior();
         double lnLikelihood();
@@ -29,13 +30,16 @@ class Particle {
         double branchMove();
         double stationaryMove();
         double invarMove();
-        double gibbsPartitionMove(double tempering);
+        double gibbsPartitionMove(double tempering, int range); // Returns infinity in case it is in an MH setting
+        double assignSite(double tempering, int site); // Returns the probability of assignment for that site
 
         void tune(); // Tune the proposal parameters
 
         std::string getNewick() { return currentPhylogeny.generateNewick(); }
         int getNumCategories() { return currentTransitionProbabilityClasses.size(); }
         int getNumNodes() { return numNodes; }
+
+        void setInvariance(double i) {currentPInvar = i;}
 
         void write(const int id, const std::string& dir);
         void read(const int id, const std::string& dir);

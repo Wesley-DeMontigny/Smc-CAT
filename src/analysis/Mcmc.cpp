@@ -7,7 +7,7 @@
 
 Mcmc::Mcmc(void) {}
 
-double Mcmc::run(Particle& model, int iterations, bool tune, bool debug, int tuneFrequency, int printFrequency, double tempering){
+double Mcmc::run(Particle& model, int iterations, bool tune, bool debug, int tuneFrequency, int printFrequency, double tempering, bool updateInvar){
     std::mt19937 generator(std::random_device{}());
     std::uniform_real_distribution unif(0.0,1.0);
 
@@ -29,7 +29,7 @@ double Mcmc::run(Particle& model, int iterations, bool tune, bool debug, int tun
             proposal = [this](Particle& m){ return m.branchMove();};
             numGibbs = model.getNumNodes()/2;
         }
-        else if(moveChoice < 0.6){
+        else if(moveChoice < 0.6 && updateInvar){
             proposal = [this](Particle& m){ return m.invarMove();};
         }
         else{
