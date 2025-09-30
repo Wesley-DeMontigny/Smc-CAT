@@ -36,7 +36,7 @@ double betaLogPDF(double x, double alpha, double beta){
     return std::pow(x, alpha - 1.0) * std::pow(1.0 - x, beta - 1.0);
 }
 
-Particle::Particle(Alignment& aln, bool fullInitialization) : 
+Particle::Particle(Alignment& aln) : 
                        numChar(aln.getNumChar()), currentPhylogeny(aln.getTaxaNames()), aln(aln),
                        oldPhylogeny(currentPhylogeny), numNodes(currentPhylogeny.getNumNodes()), numTaxa(aln.getNumTaxa()) {
 
@@ -83,10 +83,10 @@ Particle::Particle(Alignment& aln, bool fullInitialization) :
         }
     }
 
-    initialize(fullInitialization);
+    initialize();
 }
 
-void Particle::initialize(bool full){
+void Particle::initialize(){
     // We waste a little bit of compute the first time we initilize this particle object, but this is easiest right now
     currentPhylogeny = Tree(aln.getTaxaNames());
 
@@ -104,42 +104,39 @@ void Particle::initialize(bool full){
     currentPInvar = unifDist(generator);
     oldPInvar = currentPInvar;
 
-    // Only do these computations if we are initializing with the full dataset
-    if(full){
-        // Initialize the Chinese Restaurant Process
-        for(int i = 0; i < numChar; i++){
-            double randomVal = unifDist(generator);
-            double total = dppAlpha/(i + dppAlpha);
+    // Initialize the Chinese Restaurant Process
+    for(int i = 0; i < numChar; i++){
+        double randomVal = unifDist(generator);
+        double total = dppAlpha/(i + dppAlpha);
 
-            // If new category
+        // If new category
+        if(total > randomVal){
+            auto newCat = TransitionProbabilityClass(numNodes, baseMatrix.get());
+            newCat.members.insert(i);
+            currentTransitionProbabilityClasses.push_back(newCat);
+            continue;
+        }
+
+        // If old category
+        for(auto &c : currentTransitionProbabilityClasses){
+            total += c.members.size()/(i+dppAlpha);
+
             if(total > randomVal){
-                auto newCat = TransitionProbabilityClass(numNodes, baseMatrix.get());
-                newCat.members.insert(i);
-                currentTransitionProbabilityClasses.push_back(newCat);
-                continue;
-            }
-
-            // If old category
-            for(auto &c : currentTransitionProbabilityClasses){
-                total += c.members.size()/(i+dppAlpha);
-
-                if(total > randomVal){
-                    c.members.insert(i);
-                    break;
-                }
+                c.members.insert(i);
+                break;
             }
         }
-
-        for(auto& c : currentTransitionProbabilityClasses){
-            c.recomputeEigens();
-            for(auto n : currentPhylogeny.getPostOrder()){
-                c.recomputeTransitionProbs(n->id, n->branchLength, 1.0);
-            }
-        }
-
-        currentPhylogeny.updateAll();
-        refreshLikelihood();
     }
+
+    for(auto& c : currentTransitionProbabilityClasses){
+        c.recomputeEigens();
+        for(auto n : currentPhylogeny.getPostOrder()){
+            c.recomputeTransitionProbs(n->id, n->branchLength, 1.0);
+        }
+    }
+
+    currentPhylogeny.updateAll();
+    refreshLikelihood();
 
     oldPhylogeny = currentPhylogeny;
 
@@ -256,25 +253,18 @@ double Particle::lnPrior(){
     // For now we will assume flat priors on the stationary
     lnP += std::log(dppAlpha) * currentTransitionProbabilityClasses.size();
 
-    int totalActive = 0;
     for (auto& c : currentTransitionProbabilityClasses) {
         int memberCount = c.members.size();
         lnP += std::lgamma(memberCount);
-        totalActive += memberCount;
     }
 
-    lnP += std::lgamma(dppAlpha) - std::lgamma(dppAlpha + totalActive);
+    lnP += std::lgamma(dppAlpha) - std::lgamma(dppAlpha + numChar);
 
     return lnP;
 }
 
 void Particle::refreshLikelihood(){
     auto postOrder = currentPhylogeny.getPostOrder();
-
-    int activeSites = 0;
-    for(auto& c : currentTransitionProbabilityClasses){
-        activeSites += c.members.size();
-    }
 
     #if TIME_PROFILE==1
     std::chrono::steady_clock::time_point preTPUpdate = std::chrono::steady_clock::now();
@@ -325,7 +315,7 @@ void Particle::refreshLikelihood(){
         uint8_t nWorkingSpace = currentConditionalLikelihoodFlags[nIndex];
         if(n->updateCL && !n->isTip){ // Tips never need their CL buffer updated because it just defined by the data
             auto pN = conditionaLikelihoodBuffer.get() + nIndex * numChar + (nWorkingSpace * numNodes * numChar);
-            for(int i = 0; i < activeSites; i++){
+            for(int i = 0; i < numChar; i++){
                 pN[i] = Eigen::Vector<double, 20>::Ones();
             }
 
@@ -352,9 +342,9 @@ void Particle::refreshLikelihood(){
                 }
             }
             double* rescalePointer = rescaleBuffer.get() + numChar * nIndex;
-            std::fill(rescalePointer, rescalePointer + activeSites, 0.0);
+            std::fill(rescalePointer, rescalePointer + numChar, 0.0);
 
-            for(int c = 0; c < activeSites; c++){
+            for(int c = 0; c < numChar; c++){
                 double max = pN->maxCoeff();
                 *pN /= max;
                 *rescalePointer = std::log(max);
@@ -540,14 +530,14 @@ double Particle::invarMove(){
     return backward - forward;
 }
 
-double Particle::gibbsPartitionMove(double tempering, int range){
+double Particle::gibbsPartitionMove(double tempering){
     auto generator = std::mt19937(std::random_device{}());
     auto unifDist = std::uniform_real_distribution(0.0, 1.0);
 
     auto postOrder = currentPhylogeny.getPostOrder();
 
     int numAux = 5;
-    int numIter = range;
+    int numIter = numChar;
 
     double alphaSplit = std::log(dppAlpha/numAux);
 
@@ -564,7 +554,7 @@ double Particle::gibbsPartitionMove(double tempering, int range){
         #if TIME_PROFILE==1
         std::chrono::steady_clock::time_point preIter = std::chrono::steady_clock::now();
         #endif
-        int randomSite = (int)(unifDist(generator) * range);
+        int randomSite = (int)(unifDist(generator) * numChar);
         int originalCategory = -1;
         for (int i = 0; i < currentTransitionProbabilityClasses.size(); i++) {
             if (currentTransitionProbabilityClasses[i].members.count(randomSite)) {

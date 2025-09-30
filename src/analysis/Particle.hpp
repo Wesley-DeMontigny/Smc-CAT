@@ -13,9 +13,9 @@ class Alignment;
 class Particle {
     public:
         Particle(void)=delete;
-        Particle(Alignment& aln, bool fullInitialization=true);
+        Particle(Alignment& aln);
 
-        void initialize(bool full=true);
+        void initialize();
 
         void refreshLikelihood(); // Refreshes the likelihood and stores it in the currentLnLikelihood variable
         double computeSiteLikelihood(double tempering, int site); // Computes and returns the likelihood a site
@@ -30,7 +30,7 @@ class Particle {
         double branchMove();
         double stationaryMove();
         double invarMove();
-        double gibbsPartitionMove(double tempering, int range); // Returns infinity in case it is in an MH setting
+        double gibbsPartitionMove(double tempering); // Returns infinity in case it is in an MH setting
         double assignSite(double tempering, int site); // Returns the probability of assignment for that site
 
         void tune(); // Tune the proposal parameters
@@ -92,7 +92,7 @@ class Particle {
 
         std::vector<TransitionProbabilityClass> currentTransitionProbabilityClasses; // Contains all of the current DPP categories
         std::vector<TransitionProbabilityClass> oldTransitionProbabilityClasses; // Memory of the DPP categories to restore
-        double dppAlpha = 0.5;
+        double dppAlpha = 0.01;
 };
 
 #endif
