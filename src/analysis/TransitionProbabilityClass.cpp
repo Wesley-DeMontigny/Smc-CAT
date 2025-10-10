@@ -14,10 +14,10 @@ double stationaryDirichletLogPDF(const Eigen::Vector<double, 20>& x,
     return lnPdf;
 }
 
-TransitionProbabilityClass::TransitionProbabilityClass(int n, Eigen::Matrix<double, 20, 20>* bM) : baseMatrix(bM), updated(false) {
+TransitionProbabilityClass::TransitionProbabilityClass(int n, int c, Eigen::Matrix<double, 20, 20>* bM) : baseMatrix(bM), updated(false), numRates(c) {
     // Initialize a buffer of transition probabilities for each branch
-    for(int i = 0; i < n; i++){
-        transitionProbabilities.push_back(
+    for(int i = 0; i < n * numRates; i++){
+        transitionProbabilities.emplace_back(
             Eigen::Matrix<double, 20, 20>::Zero() 
         );
     }
@@ -67,14 +67,14 @@ Eigen::Matrix<double,20,20> Q = (*baseMatrix) * stationaryDistribution.asDiagona
     inverseEigenVectors = eigenVectors.inverse();
 }
 
-void TransitionProbabilityClass::recomputeTransitionProbs(int n, double t, double r){
+void TransitionProbabilityClass::recomputeTransitionProbs(int n, double t, int c, double r){
     Eigen::DiagonalMatrix<std::complex<double>,20> diag;
     for(int i = 0; i < 20; i++)
         diag.diagonal()(i) = std::exp(eigenValues(i) * t * r);
 
     auto transProb = (eigenVectors * diag * inverseEigenVectors).real();
 
-    transitionProbabilities[n] = transProb;
+    transitionProbabilities[n*numRates + c] = transProb;
 }
 
 double TransitionProbabilityClass::dirichletSimplexMove(double alpha, std::mt19937& gen){

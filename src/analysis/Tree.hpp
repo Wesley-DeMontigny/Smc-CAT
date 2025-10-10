@@ -40,6 +40,7 @@ class Tree {
         std::string generateNewick(); // Generates a Newick string for the tree. Assumes the post-order is correct.
         std::vector<TreeNode*>& getPostOrder() {return postOrder;}
         std::vector<TreeNode*>& getTips() {return tips;}
+        std::set<std::string> getSplits();
 
         const int getNumNodes() {return postOrder.size();}
         const int getNumTaxa() {return tips.size();}

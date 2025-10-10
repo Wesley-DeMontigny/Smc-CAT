@@ -13,12 +13,12 @@ class Alignment;
 class Particle {
     public:
         Particle(void)=delete;
-        Particle(Alignment& aln);
+        Particle(Alignment& aln, int nR=1, bool initInvar=false);
+        void copy(Particle& p);
 
-        void initialize();
+        void initialize(bool initInvar=false);
 
         void refreshLikelihood(); // Refreshes the likelihood and stores it in the currentLnLikelihood variable
-        double computeSiteLikelihood(double tempering, int site); // Computes and returns the likelihood a site
 
         double lnPrior();
         double lnLikelihood();
@@ -30,16 +30,20 @@ class Particle {
         double branchMove();
         double stationaryMove();
         double invarMove();
+        double shapeMove();
         double gibbsPartitionMove(double tempering); // Returns infinity in case it is in an MH setting
-        double assignSite(double tempering, int site); // Returns the probability of assignment for that site
 
         void tune(); // Tune the proposal parameters
 
         std::string getNewick() { return currentPhylogeny.generateNewick(); }
         int getNumCategories() { return currentTransitionProbabilityClasses.size(); }
         int getNumNodes() { return numNodes; }
+        int getNumRates() { return numRates; }
+        std::vector<double> getRates() { return currentRates; }
+        std::set<std::string> getSplits() { return currentPhylogeny.getSplits(); }
 
-        void setInvariance(double i) {currentPInvar = i;}
+
+        void setInvariance(double i) { currentPInvar = i; }
 
         void write(const int id, const std::string& dir);
         void read(const int id, const std::string& dir);
@@ -55,10 +59,13 @@ class Particle {
         int acceptedSubtreeScale = 0;
         int proposedInvar = 0;
         int acceptedInvar = 0;
+        int proposedRate = 0;
+        int acceptedRate = 0;
 
+        double shapeDelta = 1.0; // Delta to scale the shape of the gamma distribution
         double scaleDelta = 1.0; // Delta to scale an individual branch length
         double subtreeScaleDelta = 1.0; // Delta to scale whole subtrees
-        double stationaryAlpha = 500.0; // Concentration parameter for dirichlet simplex proposals
+        double stationaryAlpha = 10000.0; // Concentration parameter for dirichlet simplex proposals
         double invarAlpha = 100.0; // Concentration parameter for the beta simplex proposals on invar
     private:
         Tree currentPhylogeny; // We need the phylogenies to be evaluated before the numNodes
@@ -78,6 +85,7 @@ class Particle {
         bool updateBranchLength = false;
         bool updateScaleSubtree = false;
         bool updateInvar = false;
+        bool updateRate = false;
 
         std::unique_ptr<uint8_t[]> currentConditionalLikelihoodFlags; // To stop us from having to swap the whole memory space, we just keep a working space flag for each node
         std::unique_ptr<uint8_t[]> oldConditionalLikelihoodFlags; // Swap back flags if rejected
@@ -87,8 +95,14 @@ class Particle {
         
         std::unique_ptr<double[]> isInvariant;
         std::unique_ptr<int[]> invariantCharacter;
-        double currentPInvar = 0.1;
-        double oldPInvar = 0.1;
+        double currentPInvar = 0.0;
+        double oldPInvar = 0.0;
+
+        int numRates;
+        double currentShape = 1.0;
+        double oldShape = 1.0;
+        std::vector<double> currentRates;
+        std::vector<double> oldRates;
 
         std::vector<TransitionProbabilityClass> currentTransitionProbabilityClasses; // Contains all of the current DPP categories
         std::vector<TransitionProbabilityClass> oldTransitionProbabilityClasses; // Memory of the DPP categories to restore

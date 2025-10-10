@@ -4,6 +4,7 @@
 #include <cassert>
 #include <algorithm>
 #include <iostream>
+#include <unordered_map>
 
 // Construct random tree with n tips and exponentially distributed branch lengths
 Tree::Tree(int n){
@@ -24,21 +25,14 @@ Tree::Tree(int n){
     B->ancestor = root;
     B->name = "t1";
     B->id = 1;
-    auto C = addNode();
-    C->isTip = true;
-    C->ancestor = root;
-    C->name = "t2";
-    C->id = 2;
     
     root->descendants.insert(A);
     root->descendants.insert(B);
-    root->descendants.insert(C);
 
     tips.push_back(A);
     tips.push_back(B);
-    tips.push_back(C);
 
-    for(int i = 3; i < n; i++){
+    for(int i = 2; i < n; i++){
         std::uniform_int_distribution<int> dist(0,i-1);
         int randomIndex = dist(generator);
         auto randomTip = tips[randomIndex];
@@ -318,6 +312,54 @@ void Tree::updateAll(){
         n->updateCL = true;
         n->updateTP = true;
     }
+}
+
+std::string complementBinary(std::string s){
+    std::string r = "";
+    for(char c : s){
+        if(c == '0')
+            r += '1';
+        else
+            r += '0';
+    }
+    return r;
+}
+
+std::set<std::string> Tree::getSplits(){
+    std::set<std::string> splits;
+    std::unordered_map<TreeNode*, std::string> splitString;
+    std::string zeroString = "";
+    for(int i = 0; i < tips.size(); i++)
+        zeroString += "0";
+
+    for(int i = 0; i < tips.size(); i++){
+        std::string tipString(zeroString);
+        tipString[i] = '1';
+        splitString[nodes[i].get()] = tipString;
+    }
+
+    for(TreeNode* n : postOrder){
+        if(!n->isTip && !n->isRoot){
+            std::string newString(zeroString);
+            for(TreeNode* d : n->descendants){
+                std::string descString = splitString[d];
+                for(int i = 0; i < tips.size(); i++){
+                    if(descString[i] == '1'){
+                        newString[i] = '1';
+                    }
+                }
+            }
+            std::string complementS = complementBinary(newString);
+            if(complementS < newString)
+                splits.insert(complementS);
+            else
+                splits.insert(newString);
+            
+            splitString[n] = newString;
+        }
+    }
+
+    return splits;
 }
 
 double Tree::scaleBranchMove(double delta, std::mt19937& gen){
