@@ -6,6 +6,7 @@
 #include "Tree.hpp"
 
 class Alignment;
+class SerializedParticle;
 
 /*
 
@@ -15,10 +16,15 @@ class Particle {
         Particle(void)=delete;
         Particle(Alignment& aln, int nR=1, bool initInvar=false);
         void copy(Particle& p);
+        void copyFromSerialized(SerializedParticle& sp);
+        void writeToSerialized(SerializedParticle& sp);
+        void write(int id, std::string& dir);
+        void read(int id, std::string& dir);
 
         void initialize(bool initInvar=false);
 
         void refreshLikelihood(); // Refreshes the likelihood and stores it in the currentLnLikelihood variable
+        void forceLikelihoodUpdate() { currentPhylogeny.updateAll(); refreshLikelihood(); };
 
         double lnPrior();
         double lnLikelihood();
@@ -39,16 +45,18 @@ class Particle {
         int getNumCategories() { return currentTransitionProbabilityClasses.size(); }
         int getNumNodes() { return numNodes; }
         int getNumRates() { return numRates; }
+        double getShape() { return currentShape; }
+        double getPInvar() { return currentPInvar; }
+        Eigen::Matrix<double, 20, 20> getBaseMatrix() { return *baseMatrix; }
+        std::vector<int> getAssignments();
+        std::vector<Eigen::Vector<double, 20>> getCategories();
         std::vector<double> getRates() { return currentRates; }
         std::set<std::string> getSplits() { return currentPhylogeny.getSplits(); }
 
-
         void setInvariance(double i) { currentPInvar = i; }
+        void setAssignments(std::vector<int>& assignments);
 
-        void write(const int id, const std::string& dir);
-        void read(const int id, const std::string& dir);
-
-        // Variables to keep track of acceptance rates so we can tune and track performance
+        // Variables to keep track of acceptance rates so we can track performance
         int proposedStationary = 0;
         int acceptedStationary = 0;
         int proposedNNI = 0;

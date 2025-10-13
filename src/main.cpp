@@ -6,6 +6,7 @@
 #include <omp.h>
 #include <unordered_map>
 #include "core/Settings.hpp"
+#include "analysis/SerializedParticle.hpp"
 #include "analysis/RateMatrices.hpp"
 #include "analysis/Particle.hpp"
 #include "core/Alignment.hpp"
@@ -79,20 +80,24 @@ void computeNextStep(std::vector<double>& rawWeights, std::vector<double>& rawLo
 
 int main() {
     int numParticles = 500;
-    int rejuvinationIterations = 20;
+    int rejuvinationIterations = 5;
     int numThreads = omp_get_max_threads();
-    bool invar = true;
-    bool serialize = false;
-    int numRates = 3;
+    omp_set_num_threads(numThreads);
+    bool invar = false;
+    int numRates = 6;
 
     std::mt19937 gen = std::mt19937(std::random_device{}());
+    std::uniform_real_distribution unif(0.0, 1.0);
     std::uniform_real_distribution systematicUnif(0.0, 1.0/numParticles);
     std::vector<double> rawLogLikelihoods(numParticles, 0);
     std::vector<double> rawWeights(numParticles, -1.0 * std::log(numParticles));
-    std::vector<int> oldShardAssignments(numParticles, 0);
-    std::vector<int> currentShardAssignments(numParticles, 0);
 
-    Alignment aln("/workspaces/FastCAT/local_testing/globin_test.fasta");
+    std::vector<SerializedParticle> currentSerializedParticles;
+    std::vector<SerializedParticle> oldSerializedParticles;
+    currentSerializedParticles.reserve(numParticles);
+    oldSerializedParticles.reserve(numParticles);
+
+    Alignment aln("/workspaces/FastCAT/local_testing/phylo_hits.align.trim_auto.fasta");
     int numChar = aln.getNumChar();
 
     std::cout << std::format("Utilizing {} threads for working with {}", numThreads, numParticles) << std::endl;
@@ -102,172 +107,86 @@ int main() {
 
     std::chrono::steady_clock::time_point preAnalysis = std::chrono::steady_clock::now();
 
-
-    if(serialize){
-        particles.reserve(numThreads);
-        for (int t = 0; t < numThreads; ++t) {
-            particles.emplace_back(Particle(aln, numRates, invar));
-        }
-
-        // Particle initialization
-        std::cout << "Initializing SMC..." << std::endl;
-        Particle& initP = particles[0];
-        for(int n = 0; n < numParticles; ++n){  
-            initP.write(n, "/workspaces/FastCAT/local_testing/particle_states.0.s0.h5");
-            rawLogLikelihoods[n] = initP.lnLikelihood();
-            initP.initialize(invar);
-        }
-        std::cout << "Initialized Particles..." << std::endl;
-
-        // SMC algorithm
-        std::cout << "Starting SMC..." << std::endl;
-        int lastID = 0;
-        double lastTemp = 0.0;
-        for(int i = 1; lastTemp < 1.0; ++i){
-            std::vector<double> normalizedWeights(numParticles, 0.0);
-            double currentTemp = lastTemp;
-            double ESS = 0.0;
-            computeNextStep(rawWeights, rawLogLikelihoods, normalizedWeights, ESS, currentTemp, lastTemp, numParticles);
-
-            std::cout << std::format("{}\tTemp: {:.5f}\t ESS: {:.5f}", i, currentTemp, ESS) << std::endl;
-
-            if(ESS <= 0.6 * numParticles && currentTemp != 1.0){
-                std::cout << "Resampling Particles..." << std::endl;
-
-                // Systematic resampling
-                double u = systematicUnif(gen);
-                std::vector<int> assignments;
-                assignments.reserve(numParticles);
-                double cumulative = normalizedWeights[0];
-                int currentWeight = 0;
-                int k = 0;
-                double ruler = u;
-                double step = 1.0 / numParticles;
-                while (static_cast<int>(assignments.size()) < numParticles) {
-                    if (ruler <= cumulative) {
-                        assignments.push_back(k);
-                        ruler += step;
-                    } else {
-                        if (++k >= numParticles) { k = numParticles - 1; cumulative = 1.0; }
-                        else cumulative += normalizedWeights[k];
-                    }
-                }
-
-                std::cout << "Rejuvinating Particles..." << std::endl;
-                #pragma omp parallel for schedule(dynamic)
-                for (int n = 0; n < numParticles; ++n) {
-                    int threadID = omp_get_thread_num();
-                    Particle& p = particles[threadID];
-                    int particleID = assignments[n];
-
-                    std::string lastFile = std::format("/workspaces/FastCAT/local_testing/particle_states.{}.s{}.h5", lastID, oldShardAssignments[particleID]);
-                    std::string newFile = std::format("/workspaces/FastCAT/local_testing/particle_states.{}.s{}.h5", i, threadID);
-
-                    p.read(particleID, lastFile);
-
-                    mcmc.run(p, rejuvinationIterations, false, false, 1, 1, currentTemp, invar);
-                    //p.gibbsPartitionMove(currentTemp);
-                    //p.refreshLikelihood();
-                    //p.accept();
-                    rawLogLikelihoods[n] = p.lnLikelihood();
-                    rawWeights[n] = -1.0 * std::log(numParticles);
-
-                    currentShardAssignments[n] = threadID;
-                    p.write(n, newFile);
-                }
-                lastID = i;
-                std::swap(currentShardAssignments, oldShardAssignments); 
-                for(Particle& p : particles)
-                    p.tune();
-            }
-
-            lastTemp = currentTemp;
-        }
+    particles.reserve(numThreads);
+    for (int t = 0; t < numThreads; t++) {
+        particles.emplace_back(aln, numRates, invar);
     }
-    else {
-        particles.reserve(numParticles);
-        for (int t = 0; t < numParticles; ++t) {
-            particles.emplace_back(aln, numRates, invar);
-        }
 
-        // Particle initialization
-        std::cout << "Initializing SMC..." << std::endl;
-        for(int n = 0; n < numParticles; ++n){
-            rawLogLikelihoods[n] = particles[n].lnLikelihood();
-        }
-        std::cout << "Initialized Particles..." << std::endl;
+    // Particle initialization
+    std::cout << "Initializing SMC..." << std::endl;
+    Particle& initP = particles[0];
+    for(int n = 0; n < numParticles; n++){  
+        rawLogLikelihoods[n] = initP.lnLikelihood();
+        currentSerializedParticles.emplace_back(
+            initP.getNewick(), initP.getAssignments(), initP.getCategories(),
+            initP.getBaseMatrix(), initP.getPInvar(), initP.getShape()
+        );
+        initP.initialize(invar);
+    }
+    oldSerializedParticles = currentSerializedParticles;
+    std::cout << "Initialized Particles..." << std::endl;
 
-        // SMC algorithm
-        std::cout << "Starting SMC..." << std::endl;
-        double lastTemp = 0.0;
-        for(int i = 1; lastTemp < 1.0; ++i){
-            std::vector<double> normalizedWeights(numParticles, 0.0);
-            double currentTemp = lastTemp;
-            double ESS = 0.0;
-            computeNextStep(rawWeights, rawLogLikelihoods, normalizedWeights, ESS, currentTemp, lastTemp, numParticles);
+    // SMC algorithm
+    std::cout << "Starting SMC..." << std::endl;
+    double lastTemp = 0.0;
+    for(int i = 1; lastTemp < 1.0; i++){
+        std::vector<double> normalizedWeights(numParticles, 0.0);
+        double currentTemp = lastTemp;
+        double ESS = 0.0;
+        computeNextStep(rawWeights, rawLogLikelihoods, normalizedWeights, ESS, currentTemp, lastTemp, numParticles);
 
-            std::cout << std::format("{}\tTemp: {:.5f}\t ESS: {:.5f}", i, currentTemp, ESS) << std::endl;
+        std::cout << std::format("{}\tTemp: {:.5f}\t ESS: {:.5f}", i, currentTemp, ESS) << std::endl;
 
-            if(ESS <= 0.6 * numParticles && currentTemp != 1.0){
-                std::cout << "Resampling Particles..." << std::endl;
+        if(ESS <= 0.6 * numParticles && currentTemp != 1.0){
+            std::cout << "Resampling Particles..." << std::endl;
 
-                // Systematic resampling
-                std::vector<int> assignments;
-                assignments.reserve(numParticles);
-
-                double u = systematicUnif(gen);
-                double cumulative = normalizedWeights[0];
-                int k = 0;
-                double ruler = u;
-                double step = 1.0 / numParticles;
-                while (static_cast<int>(assignments.size()) < numParticles) {
-                    if (ruler <= cumulative) {
-                        assignments.push_back(k);
-                        ruler += step;
-                    } else {
-                        if (++k >= numParticles) { k = numParticles - 1; cumulative = 1.0; }
-                        else cumulative += normalizedWeights[k];
-                    }
-                }
-
-                std::vector<int> counts(numParticles, 0);
-                for (int idx : assignments) ++counts[idx];
-
-                // Identify "dead" particles
-                std::vector<int> freeSlots;
-                for (int i = 0; i < numParticles; ++i) {
-                    if (counts[i] == 0) freeSlots.push_back(i);
-                }
-
-                // Reuse dead particles
-                for (int i = 0; i < numParticles; ++i) {
-                    if (counts[i] > 1) {
-                        counts[i]--;
-                        while (counts[i] > 0) {
-                            int target = freeSlots.back();
-                            freeSlots.pop_back();
-                            particles[target].copy(particles[i]);
-                            counts[i]--;
-                        }
-                    }
-                }
-
-                std::cout << "Rejuvinating Particles..." << std::endl;
-                #pragma omp parallel for schedule(dynamic)
-                for (int n = 0; n < numParticles; ++n) {
-                    Particle& p = particles[n];
-
-                    mcmc.run(p, rejuvinationIterations, false, false, 1, 1, currentTemp, invar);
-                    //p.gibbsPartitionMove(currentTemp);
-                    //p.refreshLikelihood();
-                    //p.accept();
-                    rawLogLikelihoods[n] = p.lnLikelihood();
-                    rawWeights[n] = -1.0 * std::log(numParticles);
+            // Systematic resampling
+            double u = systematicUnif(gen);
+            std::vector<int> assignments;
+            assignments.reserve(numParticles);
+            double cumulative = normalizedWeights[0];
+            int currentWeight = 0;
+            int k = 0;
+            double ruler = u;
+            double step = 1.0 / numParticles;
+            while (static_cast<int>(assignments.size()) < numParticles) {
+                if (ruler <= cumulative) {
+                    assignments.push_back(k);
+                    ruler += step;
+                } 
+                else {
+                    if (++k >= numParticles) { k = numParticles - 1; cumulative = 1.0; }
+                    else cumulative += normalizedWeights[k];
                 }
             }
 
-            lastTemp = currentTemp;
+            std::cout << "Rejuvinating Particles..." << std::endl;
+            #pragma omp parallel for schedule(dynamic)
+            for (int n = 0; n < numParticles; n++) {
+                int threadID = omp_get_thread_num();
+                Particle& p = particles[threadID];
+                int particleID = assignments[n];
+                p.copyFromSerialized(currentSerializedParticles[particleID]);
+
+                mcmc.run(p, rejuvinationIterations, false, false, 1, 1, currentTemp, invar);
+
+                if(unif(gen) < 0.05){
+                    p.gibbsPartitionMove(currentTemp);
+                    p.refreshLikelihood();
+                    p.accept();
+                }
+                rawLogLikelihoods[n] = p.lnLikelihood();
+                rawWeights[n] = -1.0 * std::log(numParticles);
+                p.writeToSerialized(oldSerializedParticles[n]);
+            }
+            std::swap(currentSerializedParticles, oldSerializedParticles);
+
+            // This is just easy for the serialized case since all particles are getting a lot of use
+            for(Particle& p : particles)
+                p.tune();
         }
+
+        lastTemp = currentTemp;
     }
 
     std::cout << "Computing Maximum Clade Consensus Tree..." << std::endl;
@@ -284,25 +203,20 @@ int main() {
         normalizedWeights[n] /= total;
     }
 
+    // Get split posterior probabilities
     std::unordered_map<std::string, double> splitPosteriorProbabilities;
     std::vector<std::set<std::string>> particleSplits;
-    if(!serialize){
-        // Get split posterior probabilities
-        for(int i = 0; i < particles.size(); i++){
-            std::set<std::string> splitStrings = particles[i].getSplits();
-            particleSplits.push_back(splitStrings);
-            for(std::string split : splitStrings){
-                if (splitPosteriorProbabilities.count(split)) {
-                    splitPosteriorProbabilities[split] += normalizedWeights[i];
-                }
-                else {
-                    splitPosteriorProbabilities[split] = normalizedWeights[i];
-                }
+    for(int i = 0; i < particles.size(); i++){
+        std::set<std::string> splitStrings = particles[i].getSplits();
+        particleSplits.push_back(splitStrings);
+        for(std::string split : splitStrings){
+            if (splitPosteriorProbabilities.count(split)) {
+                splitPosteriorProbabilities[split] += normalizedWeights[i];
+            }
+            else {
+                splitPosteriorProbabilities[split] = normalizedWeights[i];
             }
         }
-    }
-    else{
-
     }
 
     std::vector<std::set<std::string>> deduped;
@@ -322,21 +236,13 @@ int main() {
             currentScore += std::log(splitPosteriorProbabilities[s]);
         }
 
-        if(currentScore > maxScore){
+        if(currentScore > maxScore || (currentScore == maxScore && normalizedWeights[i] > normalizedWeights[maxID])){
             maxScore = currentScore;
             maxID = i;
         }
     }
 
-    if(!serialize){
-        std::cout << particles[maxID].getNewick() << std::endl;
-        std::vector<double> rates = particles[maxID].getRates();
-        for(auto r : rates)
-            std::cout << r << std::endl;
-    }
-    else {
-
-    }
+    std::cout << currentSerializedParticles[maxID].newick << std::endl;
 
     std::chrono::steady_clock::time_point postAnalysis = std::chrono::steady_clock::now();
     std::cout << "The analysis completed in " << std::chrono::duration_cast<std::chrono::minutes>(postAnalysis - preAnalysis).count() << "[minutes]" << std::endl;

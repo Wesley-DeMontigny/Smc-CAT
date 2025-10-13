@@ -26,6 +26,7 @@ Alignment::Alignment(std::string path) : numChar(0), numTaxa(0) {
         {'Y', 18},
         {'V', 19},
         {'-', 20},
+        {'X', 21}
     };
 
     

@@ -2,9 +2,60 @@
 #include <cstdlib>
 #include <iostream>
 #include <iomanip>
+#include <vector>
+#include <random>
+#include <eigen3/Eigen/Dense>
 
 using namespace std;
 #include "Math.hpp"
+
+double Math::gammaLogPDF(double x, double shape, double rate){
+    if (x <= 0.0) return -INFINITY; 
+    return shape * std::log(rate) + (shape - 1.0) * std::log(x) - rate * x - std::lgamma(shape);
+}
+
+std::vector<double> Math::getGammaDiscretization(int numBins, double alpha){
+    std::vector<double> returnVals;
+
+    double increment = 1.0/(numBins + 1.0);
+    double val = increment/2.0;
+
+    for(int i = 0 ; i < numBins; i++){
+        int ifault;
+        returnVals.push_back(0.5 * Math::ppchi2(val, 2.0*alpha, 1e-8, &ifault)); // AS91 
+        val += increment;
+    }
+
+    return returnVals;
+}
+
+double Math::sampleBeta(double alpha, double beta, std::mt19937& gen){
+    auto alphaDist = std::gamma_distribution(alpha, 1.0);
+    auto betaDist = std::gamma_distribution(beta, 1.0);
+
+    double x = alphaDist(gen);
+    double y = betaDist(gen);
+
+    return x / (x + y);
+}
+
+double Math::betaLogPDF(double x, double alpha, double beta){
+    if(x >= 1 || x <= 0) return -INFINITY;
+
+    return std::pow(x, alpha - 1.0) * std::pow(1.0 - x, beta - 1.0);
+}
+
+double Math::stationaryDirichletLogPDF(const Eigen::Vector<double, 20>& x,
+                                 const Eigen::Vector<double, 20>& alpha) {
+    double alpha0 = alpha.sum();
+    double lnPdf = std::lgamma(alpha0);
+
+    for(int i = 0; i < 20; i++){
+        lnPdf -= std::lgamma(alpha[i]);
+        lnPdf += (alpha[i] - 1.0) * std::log(x[i]);
+    }
+    return lnPdf;
+}
 
 //****************************************************************************80
 
@@ -129,7 +180,7 @@ double Math::alnorm ( double x, bool upper )
 }
 //****************************************************************************80
 
-void Math::chi_square_cdf_values ( int *n_data, int *a, double *x, double *fx )
+void Math::chiSquareCDF ( int *n_data, int *a, double *x, double *fx )
 
 //****************************************************************************80
 //
@@ -437,7 +488,7 @@ double Math::gammad ( double x, double p, int *ifault )
       {
         rn = pn5 / pn6;
 
-        if ( fabs ( value - rn ) <= r8_min ( tol, tol * rn ) )
+        if ( fabs ( value - rn ) <= r8Min ( tol, tol * rn ) )
         {
           break;
         }
@@ -841,7 +892,7 @@ double Math::ppnd ( double p, int *ifault )
 }
 //****************************************************************************80
 
-double Math::r8_min ( double x, double y )
+double Math::r8Min ( double x, double y )
 
 //****************************************************************************80
 //

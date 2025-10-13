@@ -25,9 +25,11 @@ target_link_libraries(main PRIVATE fastcat_lib OpenMP::OpenMP_CXX)
 
 target_compile_options(fastcat_lib PRIVATE -march=native -O3)
 target_compile_options(main PRIVATE -march=native -O3)
+
 #target_compile_options(fastcat_lib PRIVATE -fsanitize=address -fno-omit-frame-pointer)
 #target_link_options(fastcat_lib PRIVATE -fsanitize=address)
 #target_compile_options(main PRIVATE -fsanitize=address -fno-omit-frame-pointer -g)
 #target_link_options(main PRIVATE -fsanitize=address)
+
 #add_compile_definitions(TEST_RUN=1)
 #add_compile_definitions(TIME_PROFILE=1)

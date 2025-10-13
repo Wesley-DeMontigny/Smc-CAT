@@ -1,28 +1,16 @@
 #include "TransitionProbabilityClass.hpp"
+#include <core/Math.hpp>
 #include <eigen3/Eigen/Eigenvalues>
 #include <iostream>
 
-double stationaryDirichletLogPDF(const Eigen::Vector<double, 20>& x,
-                                 const Eigen::Vector<double, 20>& alpha) {
-    double alpha0 = alpha.sum();
-    double lnPdf = std::lgamma(alpha0);
-
-    for(int i = 0; i < 20; i++){
-        lnPdf -= std::lgamma(alpha[i]);
-        lnPdf += (alpha[i] - 1.0) * std::log(x[i]);
-    }
-    return lnPdf;
-}
-
 TransitionProbabilityClass::TransitionProbabilityClass(int n, int c, Eigen::Matrix<double, 20, 20>* bM) : baseMatrix(bM), updated(false), numRates(c) {
     // Initialize a buffer of transition probabilities for each branch
+    transitionProbabilities.reserve(n * numRates);
     for(int i = 0; i < n * numRates; i++){
-        transitionProbabilities.emplace_back(
+        transitionProbabilities.push_back(
             Eigen::Matrix<double, 20, 20>::Zero() 
         );
     }
-
-    transitionProbabilities.shrink_to_fit();
 
     auto generator = std::mt19937(std::random_device{}());
     stationaryDistribution = sampleStationary(Eigen::Vector<double, 20>::Ones(), generator);
@@ -72,7 +60,7 @@ void TransitionProbabilityClass::recomputeTransitionProbs(int n, double t, int c
     for(int i = 0; i < 20; i++)
         diag.diagonal()(i) = std::exp(eigenValues(i) * t * r);
 
-    auto transProb = (eigenVectors * diag * inverseEigenVectors).real();
+    Eigen::Matrix<double, 20, 20> transProb = (eigenVectors * diag * inverseEigenVectors).real();
 
     transitionProbabilities[n*numRates + c] = transProb;
 }
@@ -86,8 +74,8 @@ double TransitionProbabilityClass::dirichletSimplexMove(double alpha, std::mt199
     Eigen::Vector<double, 20> revConcentrations = newStationaryDistribution;
     revConcentrations *= alpha;
 
-    double forward = stationaryDirichletLogPDF(newStationaryDistribution, concentrations);
-    double backward = stationaryDirichletLogPDF(stationaryDistribution, revConcentrations);
+    double forward = Math::stationaryDirichletLogPDF(newStationaryDistribution, concentrations);
+    double backward = Math::stationaryDirichletLogPDF(stationaryDistribution, revConcentrations);
 
     stationaryDistribution = newStationaryDistribution;
     double total = stationaryDistribution.sum();

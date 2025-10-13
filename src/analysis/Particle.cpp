@@ -4,6 +4,7 @@
 #include "RateMatrices.hpp"
 #include "H5Cpp.h"
 #include "core/Math.hpp"
+#include "SerializedParticle.hpp"
 #include <string>
 #include <vector>
 #include <sstream>
@@ -15,42 +16,6 @@
 #if TIME_PROFILE == 1
     #include <chrono>
 #endif
-
-double gammaLogPDF(double x, double shape, double rate){
-    if (x <= 0.0) return -INFINITY; 
-    return shape * std::log(rate) + (shape - 1.0) * std::log(x) - rate * x - std::lgamma(shape);
-}
-
-std::vector<double> getGammaDiscretization(int numBins, double alpha){
-    std::vector<double> returnVals;
-
-    double increment = 1.0/(numBins + 1.0);
-    double val = increment/2.0;
-
-    for(int i = 0 ; i < numBins; i++){
-        int ifault;
-        returnVals.push_back(0.5 * Math::ppchi2(val, 2.0*alpha, 1e-8, &ifault)); // AS91 
-        val += increment;
-    }
-
-    return returnVals;
-}
-
-double sampleBeta(double alpha, double beta, std::mt19937& gen){
-    auto alphaDist = std::gamma_distribution(alpha, 1.0);
-    auto betaDist = std::gamma_distribution(beta, 1.0);
-
-    double x = alphaDist(gen);
-    double y = betaDist(gen);
-
-    return x / (x + y);
-}
-
-double betaLogPDF(double x, double alpha, double beta){
-    if(x >= 1 || x <= 0) return -INFINITY;
-
-    return std::pow(x, alpha - 1.0) * std::pow(1.0 - x, beta - 1.0);
-}
 
 Particle::Particle(Alignment& aln, int nR, bool initInvar) : 
                        numChar(aln.getNumChar()), currentPhylogeny(aln.getTaxaNames()), aln(aln), numRates(nR),
@@ -136,7 +101,7 @@ void Particle::initialize(bool initInvar){
     if(numRates > 1){
         currentShape = gammaDist(generator);
         oldShape = currentShape;
-        currentRates = getGammaDiscretization(numRates, currentShape);
+        currentRates = Math::getGammaDiscretization(numRates, currentShape);
         oldRates = currentRates;
     }
 
@@ -149,7 +114,7 @@ void Particle::initialize(bool initInvar){
         if(total > randomVal){
             auto newCat = TransitionProbabilityClass(numNodes, numRates, baseMatrix.get());
             newCat.members.insert(i);
-            currentTransitionProbabilityClasses.emplace_back(newCat);
+            currentTransitionProbabilityClasses.push_back(newCat);
             continue;
         }
 
@@ -170,11 +135,10 @@ void Particle::initialize(bool initInvar){
             for(int r = 0; r < numRates; r++){
                 c.recomputeTransitionProbs(n->id, n->branchLength, r, currentRates[r]);
             }
-        }
+    }
     }
 
-    currentPhylogeny.updateAll();
-    refreshLikelihood();
+    forceLikelihoodUpdate();
 
     oldPhylogeny = currentPhylogeny;
 
@@ -210,8 +174,7 @@ void Particle::copy(Particle& p){
     currentShape = p.currentShape;
     oldShape = currentShape;
 
-    currentPhylogeny.updateAll();
-    refreshLikelihood();
+    forceLikelihoodUpdate();
 
     oldPhylogeny = currentPhylogeny;
 
@@ -224,6 +187,238 @@ void Particle::copy(Particle& p){
         currentConditionalLikelihoodFlags.get() + numNodes,
         oldConditionalLikelihoodFlags.get()
     );
+}
+
+void Particle::copyFromSerialized(SerializedParticle& sp){
+    currentPhylogeny = Tree(sp.newick, aln.getTaxaNames());
+    currentShape = sp.shape;
+    currentPInvar = sp.pInvar;
+    
+    if(numRates > 1)
+        currentRates = Math::getGammaDiscretization(numRates, currentShape);
+
+    std::vector<TreeNode*>& nodes = currentPhylogeny.getPostOrder();
+
+    currentTransitionProbabilityClasses.clear();
+    for (int i = 0; i < sp.stationaries.size(); i++) {
+        TransitionProbabilityClass cls(numNodes, numRates, baseMatrix.get());
+
+        cls.stationaryDistribution = sp.stationaries[i];
+        *cls.baseMatrix = sp.baseMatrix;
+
+        for (size_t m = 0; m < sp.assignments.size(); m++){
+            if (sp.assignments[m] == i){
+                cls.members.insert(m);
+            }
+        }
+
+        cls.recomputeEigens();
+        for(auto n : nodes){
+            for(int r = 0; r < numRates; r++){
+                cls.recomputeTransitionProbs(n->id, n->branchLength, r, currentRates[r]);
+            }
+        }
+
+        currentTransitionProbabilityClasses.push_back(cls);
+    }
+    
+    forceLikelihoodUpdate();
+
+    std::copy(rescaleBuffer.get(),
+        rescaleBuffer.get() + numChar * numNodes * numRates,
+        rescaleBuffer.get() + numChar * numNodes * numRates
+    );
+
+    std::copy(currentConditionalLikelihoodFlags.get(),
+        currentConditionalLikelihoodFlags.get() + numNodes,
+        oldConditionalLikelihoodFlags.get()
+    );
+    
+    oldPhylogeny = currentPhylogeny;
+    oldPInvar = currentPInvar;
+    oldTransitionProbabilityClasses = currentTransitionProbabilityClasses;
+    oldLnLikelihood = currentLnLikelihood;
+    oldRates = currentRates;
+    oldShape = currentShape;
+}
+
+void Particle::writeToSerialized(SerializedParticle& sp){
+    sp.newick = this->getNewick(); 
+    sp.assignments = this->getAssignments();
+    sp.stationaries = this->getCategories();
+    sp.baseMatrix = this->getBaseMatrix(); 
+    sp.pInvar = this->getPInvar(); 
+    sp.shape = this->getShape();
+}
+
+std::vector<int> Particle::getAssignments() {
+    std::vector<int> assignmentVector(numChar, -1);
+    for(int i = 0; i < currentTransitionProbabilityClasses.size(); i++){
+        auto cls = currentTransitionProbabilityClasses[i];
+        for(int m : cls.members)
+            assignmentVector[m] = i;
+    }
+
+    return assignmentVector;
+}
+
+std::vector<Eigen::Vector<double, 20>> Particle::getCategories() {
+    std::vector<Eigen::Vector<double, 20>> categories;
+    categories.reserve(currentTransitionProbabilityClasses.size());
+
+    for(auto& c : currentTransitionProbabilityClasses)
+        categories.push_back(c.stationaryDistribution);
+
+    return categories;
+}
+
+// Need to update
+void Particle::write(int id, std::string& dir) {
+    using namespace H5;
+
+    std::vector<int> assignmentVector(numChar, -1);
+    for(int i = 0; i < currentTransitionProbabilityClasses.size(); i++){
+        auto cls = currentTransitionProbabilityClasses[i];
+        for(int m : cls.members)
+            assignmentVector[m] = i;
+    }
+
+
+    std::ostringstream groupName;
+    groupName << "state_" << id;
+
+    H5File h5File;
+
+    if (std::filesystem::exists(dir)) {
+        h5File = H5File(dir, H5F_ACC_RDWR);
+    } else {
+        h5File = H5File(dir, H5F_ACC_TRUNC);
+    }
+
+    // Create a group for this particle
+    Group group = h5File.createGroup("/" + groupName.str());
+
+    // Write Newick
+    StrType strDataType(PredType::C_S1, H5T_VARIABLE);
+    DataSpace strDataSpace(H5S_SCALAR);
+    DataSet newickData = group.createDataSet("tree", strDataType, strDataSpace);
+    std::string newickStr = currentPhylogeny.generateNewick();
+    newickData.write(&newickStr, strDataType);
+
+    // Write the assignment matrix
+    hsize_t assignmentDims[1] = { assignmentVector.size() };
+    DataSpace assignmentSpace(1, assignmentDims);
+    DataSet assignmentData = group.createDataSet("assignments", PredType::NATIVE_INT32, assignmentSpace);
+    assignmentData.write(assignmentVector.data(), PredType::NATIVE_INT32);
+
+    DataSpace scalarSpace(H5S_SCALAR);
+    DataSet pInvarDataset = group.createDataSet("pInvar", PredType::NATIVE_DOUBLE, scalarSpace);
+    pInvarDataset.write(&currentPInvar, PredType::NATIVE_DOUBLE);
+
+    // Write out stationaries as a flattened 2D matrix padded with NaNs
+    size_t maxLen = numChar;
+    std::vector<double> buffer(20 * numChar, std::numeric_limits<double>::quiet_NaN());
+    for (size_t i = 0; i < currentTransitionProbabilityClasses.size(); i++) {
+        for (int j = 0; j < 20; j++) {
+            buffer[i * 20 + j] = currentTransitionProbabilityClasses[i].stationaryDistribution[j];
+        }
+    }
+
+    hsize_t dims[2] = { 20, maxLen };
+    DataSpace stationarySpace(2, dims);
+    DataSet stationaryData = group.createDataSet("stationaries", PredType::NATIVE_DOUBLE, stationarySpace);
+    stationaryData.write(buffer.data(), PredType::NATIVE_DOUBLE);
+}
+
+// Need to update
+void Particle::read(int id, std::string& dir){
+    using namespace H5;
+    std::ostringstream groupName;
+    groupName << "state_" << id;
+
+    H5File h5File(dir, H5F_ACC_RDONLY);
+    Group group = h5File.openGroup("/" + groupName.str());
+
+    // Read Newick
+    DataSet newickData = group.openDataSet("tree");
+    StrType strDataType(PredType::C_S1, H5T_VARIABLE);
+    H5std_string newick;
+    newickData.read(newick, strDataType);
+    currentPhylogeny = Tree(newick, aln.getTaxaNames());
+
+    // Read assignments
+    DataSet assignmentData = group.openDataSet("assignments");
+    DataSpace assignmentSpace = assignmentData.getSpace();
+
+    DataSet pInvarData = group.openDataSet("pInvar");
+    pInvarData.read(&currentPInvar, PredType::NATIVE_DOUBLE);
+
+    hsize_t assignmentDims[1];
+    assignmentSpace.getSimpleExtentDims(assignmentDims, nullptr);
+    std::vector<int> assignmentVector(assignmentDims[0]);
+    assignmentData.read(assignmentVector.data(), PredType::NATIVE_INT32);
+
+    currentTransitionProbabilityClasses.clear();
+
+    // Read stationaries
+    DataSet stationaryData = group.openDataSet("stationaries");
+    DataSpace stationarySpace = stationaryData.getSpace();
+
+    hsize_t dims[2];
+    stationarySpace.getSimpleExtentDims(dims, nullptr);
+    size_t rows = dims[0];
+    size_t cols = dims[1];
+
+    std::vector<double> buffer(rows * cols);
+    stationaryData.read(buffer.data(), PredType::NATIVE_DOUBLE);
+
+    int maxClass = *std::max_element(assignmentVector.begin(), assignmentVector.end());
+
+    for (int i = 0; i <= maxClass; i++) {
+        TransitionProbabilityClass cls(numNodes, numRates, baseMatrix.get());
+
+        for (size_t j = 0; j < rows; j++) {
+            double val = buffer[i * rows + j];
+            if (!std::isnan(val)) {
+                cls.stationaryDistribution[j] = val;
+            }
+        }
+
+        for (size_t m = 0; m < assignmentVector.size(); m++) {
+            if (assignmentVector[m] == i) {
+                cls.members.insert(m);
+            }
+        }
+
+        cls.recomputeEigens();
+        for(auto n : currentPhylogeny.getPostOrder()){
+            for(int r = 0; r < numRates; r++){
+                cls.recomputeTransitionProbs(n->id, n->branchLength, r, currentRates[r]);
+            }
+        }
+
+        currentTransitionProbabilityClasses.push_back(cls);
+    }
+    
+    forceLikelihoodUpdate();
+
+    oldPhylogeny = currentPhylogeny;
+
+    std::copy(rescaleBuffer.get(),
+        rescaleBuffer.get() + numChar * numNodes * numRates,
+        rescaleBuffer.get() + numChar * numNodes * numRates
+    );
+
+    std::copy(currentConditionalLikelihoodFlags.get(),
+        currentConditionalLikelihoodFlags.get() + numNodes,
+        oldConditionalLikelihoodFlags.get()
+    );
+    
+    oldPInvar = currentPInvar;
+
+    oldTransitionProbabilityClasses = currentTransitionProbabilityClasses;
+
+    oldLnLikelihood = currentLnLikelihood;
 }
 
 void Particle::accept(){
@@ -327,10 +522,10 @@ double Particle::lnPrior(){
     for(auto n : currentPhylogeny.getPostOrder()){
         lengthSum += n->branchLength;
     }
-    lnP += gammaLogPDF(lengthSum, shape, treeRate);
+    lnP += Math::gammaLogPDF(lengthSum, shape, treeRate);
 
     // Shape prior
-    lnP += gammaLogPDF(currentShape, 3.0, 0.5);
+    lnP += Math::gammaLogPDF(currentShape, 3.0, 0.5);
 
     // For now we will assume flat priors on the stationary
     lnP += std::log(dppAlpha) * currentTransitionProbabilityClasses.size();
@@ -341,6 +536,17 @@ double Particle::lnPrior(){
     lnP += std::lgamma(dppAlpha) - std::lgamma(dppAlpha + numChar);
 
     return lnP;
+}
+
+void Particle::setAssignments(std::vector<int>& assignments) {
+    for (int i = 0; i < currentTransitionProbabilityClasses.size(); i++) {
+        currentTransitionProbabilityClasses[i].members.clear();
+        for (size_t m = 0; m < assignments.size(); m++){
+            if (assignments[m] == i){
+                currentTransitionProbabilityClasses[i].members.insert(m);
+            }
+        }
+    }
 }
 
 void Particle::refreshLikelihood(){
@@ -369,8 +575,9 @@ void Particle::refreshLikelihood(){
             if(n->updateTP){
                 n->updateTP = false;
                 for(auto& c : currentTransitionProbabilityClasses){
-                    for(int r = 0; r < numRates; r++)
+                    for(int r = 0; r < numRates; r++){
                         c.recomputeTransitionProbs(n->id, n->branchLength, r, currentRates[r]);
+                    }
                 }
             }
         }
@@ -519,8 +726,27 @@ double Particle::branchMove(){
 
 double Particle::stationaryMove(){
     auto generator = std::mt19937(std::random_device{}());
-    auto unifDist = std::uniform_int_distribution<int>(0, currentTransitionProbabilityClasses.size() - 1);
-    double randCategory = unifDist(generator);
+    auto unifDist = std::uniform_real_distribution(0.0, 1.0);
+
+    std::vector<double> weights;
+    weights.reserve(currentTransitionProbabilityClasses.size());
+    double total = 0.0;
+    for(auto& c : currentTransitionProbabilityClasses){
+        int classSize = c.members.size();
+        total += classSize;
+        weights.push_back(classSize);
+    }
+
+    double randomDraw = unifDist(generator) * total;
+    int randCategory = 0;
+    double cumSum = 0.0;
+    for(int i = 0; i < weights.size(); i++){
+        cumSum += weights[i];
+        if(cumSum >= randomDraw){
+            randCategory = i;
+            break;
+        }
+    }
 
     double hastings = currentTransitionProbabilityClasses[randCategory].dirichletSimplexMove(stationaryAlpha, generator);
     updateStationary = true;
@@ -534,13 +760,13 @@ double Particle::invarMove(){
 
     double a = invarAlpha + 1.0;
     double b = (invarAlpha / currentPInvar) - a + 2.0;
-    double newPInvar = sampleBeta(a, b, generator);
+    double newPInvar = Math::sampleBeta(a, b, generator);
 
     double a2 = invarAlpha + 1.0;
     double b2 = (invarAlpha / newPInvar) - a2 + 2.0;
 
-    double forward = betaLogPDF(newPInvar, a, b);
-    double backward = betaLogPDF(currentPInvar, a2, b2);
+    double forward = Math::betaLogPDF(newPInvar, a, b);
+    double backward = Math::betaLogPDF(currentPInvar, a2, b2);
 
     currentPInvar = newPInvar;
 
@@ -560,7 +786,7 @@ double Particle::shapeMove(){
 
     updateRate = true;
     currentPhylogeny.updateAll();
-    currentRates = getGammaDiscretization(numRates, currentShape);
+    currentRates = Math::getGammaDiscretization(numRates, currentShape);
 
     return std::log(scale);
 }
@@ -609,10 +835,11 @@ double Particle::gibbsPartitionMove(double tempering){
             auxCat.recomputeEigens();
             for(auto node : postOrder){
                 node->updateTP = false;
-                for(int r = 0; r < numRates; r++)
+                for(int r = 0; r < numRates; r++){
                     auxCat.recomputeTransitionProbs(node->id, node->branchLength, r, currentRates[r]);
+                }
             }
-            currentTransitionProbabilityClasses.emplace_back(auxCat);
+            currentTransitionProbabilityClasses.push_back(auxCat);
         }
 
         int catSize = currentTransitionProbabilityClasses.size();
@@ -825,151 +1052,4 @@ void Particle::tune(){
         acceptedRate = 0;
         proposedRate = 0;
     }
-}
-
-void Particle::write(const int id, const std::string& dir){
-    using namespace H5;
-
-    std::vector<int> assignmentVector(numChar, -1);
-    for(int i = 0; i < currentTransitionProbabilityClasses.size(); i++){
-        auto cls = currentTransitionProbabilityClasses[i];
-        for(int m : cls.members)
-            assignmentVector[m] = i;
-    }
-
-
-    std::ostringstream groupName;
-    groupName << "state_" << id;
-
-    H5File h5File;
-
-    if (std::filesystem::exists(dir)) {
-        h5File = H5File(dir, H5F_ACC_RDWR);
-    } else {
-        h5File = H5File(dir, H5F_ACC_TRUNC);
-    }
-
-    // Create a group for this particle
-    Group group = h5File.createGroup("/" + groupName.str());
-
-    // Write Newick
-    StrType strDataType(PredType::C_S1, H5T_VARIABLE);
-    DataSpace strDataSpace(H5S_SCALAR);
-    DataSet newickData = group.createDataSet("tree", strDataType, strDataSpace);
-    std::string newickStr = currentPhylogeny.generateNewick();
-    newickData.write(&newickStr, strDataType);
-
-    // Write the assignment matrix
-    hsize_t assignmentDims[1] = { assignmentVector.size() };
-    DataSpace assignmentSpace(1, assignmentDims);
-    DataSet assignmentData = group.createDataSet("assignments", PredType::NATIVE_INT32, assignmentSpace);
-    assignmentData.write(assignmentVector.data(), PredType::NATIVE_INT32);
-
-    DataSpace scalarSpace(H5S_SCALAR);
-    DataSet pInvarDataset = group.createDataSet("pInvar", PredType::NATIVE_DOUBLE, scalarSpace);
-    pInvarDataset.write(&currentPInvar, PredType::NATIVE_DOUBLE);
-
-    // Write out stationaries as a flattened 2D matrix padded with NaNs
-    size_t maxLen = numChar;
-    std::vector<double> buffer(20 * numChar, std::numeric_limits<double>::quiet_NaN());
-    for (size_t i = 0; i < currentTransitionProbabilityClasses.size(); i++) {
-        for (int j = 0; j < 20; j++) {
-            buffer[i * 20 + j] = currentTransitionProbabilityClasses[i].stationaryDistribution[j];
-        }
-    }
-
-    hsize_t dims[2] = { 20, maxLen };
-    DataSpace stationarySpace(2, dims);
-    DataSet stationaryData = group.createDataSet("stationaries", PredType::NATIVE_DOUBLE, stationarySpace);
-    stationaryData.write(buffer.data(), PredType::NATIVE_DOUBLE);
-}
-
-void Particle::read(const int id, const std::string& dir){
-    using namespace H5;
-    std::ostringstream groupName;
-    groupName << "state_" << id;
-
-    H5File h5File(dir, H5F_ACC_RDONLY);
-    Group group = h5File.openGroup("/" + groupName.str());
-
-    // Read Newick
-    DataSet newickData = group.openDataSet("tree");
-    StrType strDataType(PredType::C_S1, H5T_VARIABLE);
-    H5std_string newick;
-    newickData.read(newick, strDataType);
-    currentPhylogeny = Tree(newick, aln.getTaxaNames());
-
-    // Read assignments
-    DataSet assignmentData = group.openDataSet("assignments");
-    DataSpace assignmentSpace = assignmentData.getSpace();
-
-    DataSet pInvarData = group.openDataSet("pInvar");
-    pInvarData.read(&currentPInvar, PredType::NATIVE_DOUBLE);
-
-    hsize_t assignmentDims[1];
-    assignmentSpace.getSimpleExtentDims(assignmentDims, nullptr);
-    std::vector<int> assignmentVector(assignmentDims[0]);
-    assignmentData.read(assignmentVector.data(), PredType::NATIVE_INT32);
-
-    currentTransitionProbabilityClasses.clear();
-
-    // Read stationaries
-    DataSet stationaryData = group.openDataSet("stationaries");
-    DataSpace stationarySpace = stationaryData.getSpace();
-
-    hsize_t dims[2];
-    stationarySpace.getSimpleExtentDims(dims, nullptr);
-    size_t rows = dims[0];
-    size_t cols = dims[1];
-
-    std::vector<double> buffer(rows * cols);
-    stationaryData.read(buffer.data(), PredType::NATIVE_DOUBLE);
-
-    int maxClass = *std::max_element(assignmentVector.begin(), assignmentVector.end());
-
-    for (int i = 0; i <= maxClass; i++) {
-        TransitionProbabilityClass cls(numChar, numRates, baseMatrix.get());
-
-        for (size_t j = 0; j < rows; j++) {
-            double val = buffer[i * rows + j];
-            if (!std::isnan(val)) {
-                cls.stationaryDistribution[j] = val;
-            }
-        }
-
-        for (size_t m = 0; m < assignmentVector.size(); m++) {
-            if (assignmentVector[m] == i) {
-                cls.members.insert(m);
-            }
-        }
-
-        cls.recomputeEigens();
-        for(auto n : currentPhylogeny.getPostOrder()){
-            for(int r = 0; r < numRates; r++)
-                cls.recomputeTransitionProbs(n->id, n->branchLength, numRates, currentRates[r]);
-        }
-
-        currentTransitionProbabilityClasses.emplace_back(cls);
-    }
-    
-    currentPhylogeny.updateAll();
-    refreshLikelihood();
-
-    oldPhylogeny = currentPhylogeny;
-
-    std::copy(rescaleBuffer.get(),
-        rescaleBuffer.get() + numChar * numNodes * numRates,
-        rescaleBuffer.get() + numChar * numNodes * numRates
-    );
-
-    std::copy(currentConditionalLikelihoodFlags.get(),
-        currentConditionalLikelihoodFlags.get() + numNodes,
-        oldConditionalLikelihoodFlags.get()
-    );
-    
-    oldPInvar = currentPInvar;
-
-    oldTransitionProbabilityClasses = currentTransitionProbabilityClasses;
-
-    oldLnLikelihood = currentLnLikelihood;
 }
