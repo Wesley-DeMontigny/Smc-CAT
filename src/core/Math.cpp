@@ -16,6 +16,7 @@ double Math::gammaLogPDF(double x, double shape, double rate){
 
 std::vector<double> Math::getGammaDiscretization(int numBins, double alpha){
     std::vector<double> returnVals;
+    returnVals.reserve(numBins);
 
     double increment = 1.0/(numBins + 1.0);
     double val = increment/2.0;

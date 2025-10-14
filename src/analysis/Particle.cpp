@@ -199,29 +199,66 @@ void Particle::copyFromSerialized(SerializedParticle& sp){
 
     std::vector<TreeNode*>& nodes = currentPhylogeny.getPostOrder();
 
-    currentTransitionProbabilityClasses.clear();
-    for (int i = 0; i < sp.stationaries.size(); i++) {
-        TransitionProbabilityClass cls(numNodes, numRates, baseMatrix.get());
+    #if TIME_PROFILE == 1
+    std::chrono::steady_clock::time_point preTransProb = std::chrono::steady_clock::now();
+    #endif
 
-        cls.stationaryDistribution = sp.stationaries[i];
-        *cls.baseMatrix = sp.baseMatrix;
-
-        for (size_t m = 0; m < sp.assignments.size(); m++){
-            if (sp.assignments[m] == i){
-                cls.members.insert(m);
-            }
-        }
-
-        cls.recomputeEigens();
-        for(auto n : nodes){
-            for(int r = 0; r < numRates; r++){
-                cls.recomputeTransitionProbs(n->id, n->branchLength, r, currentRates[r]);
-            }
-        }
-
-        currentTransitionProbabilityClasses.push_back(cls);
+    currentTransitionProbabilityClasses.reserve(sp.stationaries.size());
+    if(sp.stationaries.size() < currentTransitionProbabilityClasses.size()){
+        int numToDelete = currentTransitionProbabilityClasses.size() - sp.stationaries.size();
+        currentTransitionProbabilityClasses.erase(currentTransitionProbabilityClasses.end() - numToDelete, currentTransitionProbabilityClasses.end());
     }
-    
+
+    int numExisting = currentTransitionProbabilityClasses.size();
+    for (int i = 0; i < sp.stationaries.size(); i++) {
+        if(i < numExisting){
+            TransitionProbabilityClass& cls = currentTransitionProbabilityClasses[i];
+
+            cls.stationaryDistribution = sp.stationaries[i];
+            *cls.baseMatrix = sp.baseMatrix;
+
+            cls.members.clear();
+            for (size_t m = 0; m < sp.assignments.size(); m++){
+                if (sp.assignments[m] == i){
+                    cls.members.insert(m);
+                }
+            }
+
+            cls.recomputeEigens();
+            for(auto n : nodes){
+                for(int r = 0; r < numRates; r++){
+                    cls.recomputeTransitionProbs(n->id, n->branchLength, r, currentRates[r]);
+                }
+            }
+        }
+        else{
+            TransitionProbabilityClass cls(numNodes, numRates, baseMatrix.get());
+
+            cls.stationaryDistribution = sp.stationaries[i];
+            *cls.baseMatrix = sp.baseMatrix;
+
+            for (size_t m = 0; m < sp.assignments.size(); m++){
+                if (sp.assignments[m] == i){
+                    cls.members.insert(m);
+                }
+            }
+
+            cls.recomputeEigens();
+            for(auto n : nodes){
+                for(int r = 0; r < numRates; r++){
+                    cls.recomputeTransitionProbs(n->id, n->branchLength, r, currentRates[r]);
+                }
+            }
+
+            currentTransitionProbabilityClasses.push_back(cls);
+        }
+    }
+
+    #if TIME_PROFILE == 1
+    std::chrono::steady_clock::time_point postTransProb = std::chrono::steady_clock::now();
+    std::cout << "The transition prob copy completed in " << std::chrono::duration_cast<std::chrono::milliseconds>(postTransProb - preTransProb).count() << "[milliseconds]" << std::endl;
+    #endif
+
     forceLikelihoodUpdate();
 
     std::copy(rescaleBuffer.get(),
@@ -240,6 +277,11 @@ void Particle::copyFromSerialized(SerializedParticle& sp){
     oldLnLikelihood = currentLnLikelihood;
     oldRates = currentRates;
     oldShape = currentShape;
+
+    #if TIME_PROFILE == 1
+    std::chrono::steady_clock::time_point postLikelihood = std::chrono::steady_clock::now();
+    std::cout << "The forced likelihood update and accept compelted in " << std::chrono::duration_cast<std::chrono::milliseconds>(postTransProb - preTransProb).count() << "[milliseconds]" << std::endl;
+    #endif
 }
 
 void Particle::writeToSerialized(SerializedParticle& sp){
@@ -373,7 +415,7 @@ void Particle::read(int id, std::string& dir){
     stationaryData.read(buffer.data(), PredType::NATIVE_DOUBLE);
 
     int maxClass = *std::max_element(assignmentVector.begin(), assignmentVector.end());
-
+    currentTransitionProbabilityClasses.reserve(maxClass + 1);
     for (int i = 0; i <= maxClass; i++) {
         TransitionProbabilityClass cls(numNodes, numRates, baseMatrix.get());
 
@@ -599,24 +641,24 @@ void Particle::refreshLikelihood(){
     std::chrono::steady_clock::time_point prePrune = std::chrono::steady_clock::now();
     #endif
 
-    int spacer = numNodes * numChar * numRates;
+    int nodeSpacer = numChar * numRates; // The length that spans a single node of the condL buffer
+    int fullSpacer = numNodes * nodeSpacer; // The length that spans the whole condL buffer
+    Eigen::Matrix<double,20,1> workBuffer;
 
     for(auto n : postOrder){
         int nIndex = n->id;
         uint8_t nWorkingSpace = currentConditionalLikelihoodFlags[nIndex];
         if(n->updateCL && !n->isTip){ // Tips never need their CL buffer updated because it just defined by the data
-            auto pN = conditionaLikelihoodBuffer.get() + (nIndex * numChar * numRates) + (nWorkingSpace * spacer);
-            for(int i = 0; i < numChar * numRates; i++){
+            auto pN = conditionaLikelihoodBuffer.get() + (nIndex * nodeSpacer) + (nWorkingSpace * fullSpacer);
+            for(int i = 0; i < nodeSpacer; i++){
                 pN[i].setOnes();
             }
 
             for(auto d : n->descendants){
                 int dIndex = d->id;
+                int pOffset = dIndex * numRates;
                 uint8_t dWorkingSpace = currentConditionalLikelihoodFlags[dIndex];
-
-                auto pD = conditionaLikelihoodBuffer.get() + (dIndex * numChar * numRates) + (dWorkingSpace * spacer);
-
-                Eigen::Matrix<double,20,1> workBuffer;
+                auto pD = conditionaLikelihoodBuffer.get() + (dIndex * nodeSpacer) + (dWorkingSpace * fullSpacer);
 
                 /*
                     We are adopting a class-wise version of the inner loop. Indexing isn't as nice as incrementing a pointer
@@ -626,18 +668,20 @@ void Particle::refreshLikelihood(){
                 */
                 for(auto& tClass : currentTransitionProbabilityClasses){
                     for(int r = 0; r < numRates; r++){
-                        Eigen::Matrix<double, 20, 20>& P = tClass.transitionProbabilities[dIndex*numRates + r];
+                        Eigen::Matrix<double, 20, 20>& P = tClass.transitionProbabilities[pOffset + r];
                         for(int c : tClass.members){
-                            workBuffer.noalias() = P * pD[c*numRates + r];
-                            pN[c*numRates + r].array() *= workBuffer.array();
+                            auto& pDRef = pD[c * numRates + r];
+                            auto& pNRef = pN[c * numRates + r];
+                            workBuffer.noalias() = P * pDRef;
+                            pNRef.array() *= workBuffer.array();
                         }
                     }
                 }
             }
-            double* rescalePointer = rescaleBuffer.get() + numChar * numRates * nIndex;
-            std::fill(rescalePointer, rescalePointer + numChar * numRates, 0.0);
+            double* rescalePointer = rescaleBuffer.get() + nodeSpacer * nIndex;
+            std::fill(rescalePointer, rescalePointer + nodeSpacer, 0.0);
 
-            for(int c = 0; c < numChar * numRates; c++){
+            for(int c = 0; c < nodeSpacer; c++){
                 double max = pN->maxCoeff();
                 *pN /= max;
                 *rescalePointer = std::log(max);
@@ -660,7 +704,7 @@ void Particle::refreshLikelihood(){
 
     int rIndex = currentPhylogeny.getRoot()->id;
     uint8_t dWorkingSpace = currentConditionalLikelihoodFlags[rIndex];
-    auto pR = conditionaLikelihoodBuffer.get() + rIndex * numChar * numRates + (dWorkingSpace * spacer);
+    auto pR = conditionaLikelihoodBuffer.get() + rIndex * nodeSpacer + (dWorkingSpace * fullSpacer);
     
     double lnL = 0.0;
     std::vector<double> logs(numRates);
@@ -671,12 +715,12 @@ void Particle::refreshLikelihood(){
         auto stationaryVec = (tClass.stationaryDistribution).array();
         for(int c : tClass.members){
             // We need to use log-sum-exp to handle multiple rates
-            double maxLogLike = -std::numeric_limits<double>::infinity();
+            double maxLogLike = -1.0 * INFINITY;
 
             for (int r = 0; r < numRates; r++) {
                 double logLikeR = std::log((stationaryVec * (pR[c * numRates + r]).array()).sum());
                 for (int n = 0; n < numNodes; n++)
-                    logLikeR += rescaleBuffer[numChar * numRates * n + c * numRates + r];
+                    logLikeR += rescaleBuffer[nodeSpacer * n + c * numRates + r];
                 logs[r] = logLikeR;
                 if (logLikeR > maxLogLike) maxLogLike = logLikeR;
             }
@@ -844,12 +888,14 @@ double Particle::gibbsPartitionMove(double tempering){
 
         int catSize = currentTransitionProbabilityClasses.size();
 
+        Eigen::Matrix<double,20,1> workBuffer;
+
         // We try to give ourselves a big enough buffer at the beginning, but if it gets too small, update it.
         if(bufferSize < catSize){
             delete [] tempCLBuffer;
             delete [] tempRescaleBuffer;
 
-            bufferSize = (4 * numAux + catSize);
+            bufferSize = (2 * numAux + catSize);
             tempCLBuffer = new Eigen::Vector<double, 20>[numNodes * numRates * bufferSize];
             tempRescaleBuffer = new double[numNodes * numRates * bufferSize];
             for(int i = 0; i < numNodes * numRates * bufferSize; i++){
@@ -858,34 +904,38 @@ double Particle::gibbsPartitionMove(double tempering){
             }
         }
 
+        int nodeSpacer = bufferSize * numRates;
+        int activeNodeSpacer = catSize * numRates;
+        int fullSpacer = numNodes * nodeSpacer;
+
         // Run the pruning algorithm
         for(auto n : postOrder){
             int nIndex = n->id;
-            auto pN = tempCLBuffer + nIndex * numRates * bufferSize;
+            auto pN = tempCLBuffer + nIndex * nodeSpacer;
             if(!n->isTip){
-                for(int i = 0; i < bufferSize * numRates; i++){
+                for(int i = 0; i < activeNodeSpacer; i++){
                     pN[i].setOnes();
                 }
 
                 for(auto d : n->descendants){
                     int dIndex = d->id;
-
-                    auto pD = tempCLBuffer+ dIndex * numRates * bufferSize;
-
-                    Eigen::Matrix<double,20,1> workBuffer;
-
+                    int pOffset = dIndex * numRates;
+                    auto pD = tempCLBuffer+ dIndex * nodeSpacer;
+                    
                     for(int c = 0; c < catSize; c++){
                         for(int r = 0; r < numRates; r++){
-                            Eigen::Matrix<double, 20, 20>& P = currentTransitionProbabilityClasses[c].transitionProbabilities[dIndex * numRates + r];
-                            workBuffer.noalias() = P * pD[c*numRates + r];
-                            pN[c*numRates + r].array() *= workBuffer.array();
+                            Eigen::Matrix<double, 20, 20>& P = currentTransitionProbabilityClasses[c].transitionProbabilities[pOffset + r];
+                            auto& pDRef = pD[c * numRates + r];
+                            auto& pNRef = pN[c * numRates + r];
+                            workBuffer.noalias() = P * pDRef;
+                            pNRef.array() *= workBuffer.array();
                         }
                     }
                 }
-                double* rescalePointer = tempRescaleBuffer + bufferSize * numRates * nIndex;
-                std::fill(rescalePointer, rescalePointer + bufferSize * numRates, 0.0);
+                double* rescalePointer = tempRescaleBuffer + activeNodeSpacer * nIndex;
+                std::fill(rescalePointer, rescalePointer + activeNodeSpacer, 0.0);
 
-                for(int c = 0; c < catSize * numRates; c++){
+                for(int c = 0; c < activeNodeSpacer; c++){
                     double max = pN->maxCoeff();
                     *pN /= max;
                     *rescalePointer = std::log(max);
@@ -897,16 +947,17 @@ double Particle::gibbsPartitionMove(double tempering){
             else{
                 for(int c = 0; c < catSize; c++){
                     for(int r = 0; r < numRates; r++){
-                        pN[c*numRates + r] = *(conditionaLikelihoodBuffer.get() + nIndex * numChar * numRates + randomSite);
+                        pN[c*numRates + r].noalias() = *(conditionaLikelihoodBuffer.get() + nIndex * numChar * numRates + randomSite);
                     }
                 }
             }
         }
 
         int rIndex = currentPhylogeny.getRoot()->id;
-        auto pR = tempCLBuffer + rIndex * bufferSize * numRates;
+        auto pR = tempCLBuffer + rIndex * nodeSpacer;
         
         std::vector<double> likelihoodVec;
+        likelihoodVec.reserve(catSize);
         std::vector<double> logs(numRates);
         double invInvarScaler = 1.0 - currentPInvar;
 
@@ -918,7 +969,7 @@ double Particle::gibbsPartitionMove(double tempering){
             for (int r = 0; r < numRates; r++) {
                 double logLikeR = std::log((stationaryVec * (pR[c*numRates + r]).array()).sum());
                 for (int n = 0; n < numNodes; n++)
-                    logLikeR += tempRescaleBuffer[bufferSize * numRates * n + c * numRates + r];
+                    logLikeR += tempRescaleBuffer[nodeSpacer * n + c * numRates + r];
                 logs[r] = logLikeR;
                 if (logLikeR > maxLogLike) maxLogLike = logLikeR;
             }

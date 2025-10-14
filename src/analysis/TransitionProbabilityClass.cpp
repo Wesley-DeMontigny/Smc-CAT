@@ -12,6 +12,10 @@ TransitionProbabilityClass::TransitionProbabilityClass(int n, int c, Eigen::Matr
         );
     }
 
+    workingMatrix1 = Eigen::Matrix<Eigen::dcomplex, 20, 20>::Zero();
+    workingMatrix2 = Eigen::Matrix<Eigen::dcomplex, 20, 20>::Zero();
+    workingDiag = Eigen::DiagonalMatrix<Eigen::dcomplex, 20>{};
+
     auto generator = std::mt19937(std::random_device{}());
     stationaryDistribution = sampleStationary(Eigen::Vector<double, 20>::Ones(), generator);
 }
@@ -32,7 +36,7 @@ Eigen::Vector<double, 20> TransitionProbabilityClass::sampleStationary(Eigen::Ve
 
 
 void TransitionProbabilityClass::recomputeEigens(){
-Eigen::Matrix<double,20,20> Q = (*baseMatrix) * stationaryDistribution.asDiagonal();
+    Eigen::Matrix<double,20,20> Q = (*baseMatrix) * stationaryDistribution.asDiagonal();
 
     for (int i = 0; i < 20; i++) {
         double offDiag = 0.0;
@@ -56,13 +60,13 @@ Eigen::Matrix<double,20,20> Q = (*baseMatrix) * stationaryDistribution.asDiagona
 }
 
 void TransitionProbabilityClass::recomputeTransitionProbs(int n, double t, int c, double r){
-    Eigen::DiagonalMatrix<std::complex<double>,20> diag;
     for(int i = 0; i < 20; i++)
-        diag.diagonal()(i) = std::exp(eigenValues(i) * t * r);
+        workingDiag.diagonal()(i) = std::exp(eigenValues(i) * t * r);
 
-    Eigen::Matrix<double, 20, 20> transProb = (eigenVectors * diag * inverseEigenVectors).real();
+    workingMatrix1.noalias() = eigenVectors * workingDiag;
+    workingMatrix2.noalias() = workingMatrix1 * inverseEigenVectors;
 
-    transitionProbabilities[n*numRates + c] = transProb;
+    transitionProbabilities[n*numRates + c] = workingMatrix2.real();
 }
 
 double TransitionProbabilityClass::dirichletSimplexMove(double alpha, std::mt19937& gen){

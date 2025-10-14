@@ -26,6 +26,11 @@ struct TransitionProbabilityClass {
 
     bool updated;
     int numRates;
+
+    private:
+        Eigen::DiagonalMatrix<Eigen::dcomplex, 20> workingDiag;
+        Eigen::Matrix<Eigen::dcomplex, 20, 20> workingMatrix1;
+        Eigen::Matrix<Eigen::dcomplex, 20, 20> workingMatrix2;
 };
 
 #endif

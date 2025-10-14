@@ -84,7 +84,7 @@ int main() {
     int numThreads = omp_get_max_threads();
     omp_set_num_threads(numThreads);
     bool invar = false;
-    int numRates = 6;
+    int numRates = 1;
 
     std::mt19937 gen = std::mt19937(std::random_device{}());
     std::uniform_real_distribution unif(0.0, 1.0);
