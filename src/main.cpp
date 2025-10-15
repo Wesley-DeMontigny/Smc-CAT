@@ -84,13 +84,21 @@ int main() {
     int numThreads = omp_get_max_threads();
     omp_set_num_threads(numThreads);
     bool invar = false;
-    int numRates = 1;
+    int numRates = 4;
 
     std::mt19937 gen = std::mt19937(std::random_device{}());
     std::uniform_real_distribution unif(0.0, 1.0);
     std::uniform_real_distribution systematicUnif(0.0, 1.0/numParticles);
+    
     std::vector<double> rawLogLikelihoods(numParticles, 0);
     std::vector<double> rawWeights(numParticles, -1.0 * std::log(numParticles));
+
+    std::unordered_map<std::string, double> splitPosteriorProbabilities;
+    std::vector<std::set<std::string>> particleSplits;
+    particleSplits.reserve(numParticles);
+    for(int i = 0; i < numParticles; i++){
+        particleSplits.push_back({});
+    }
 
     std::vector<SerializedParticle> currentSerializedParticles;
     std::vector<SerializedParticle> oldSerializedParticles;
@@ -121,6 +129,7 @@ int main() {
             initP.getNewick(), initP.getAssignments(), initP.getCategories(),
             initP.getBaseMatrix(), initP.getPInvar(), initP.getShape()
         );
+        particleSplits[n] = initP.getSplits();
         initP.initialize(invar);
     }
     oldSerializedParticles = currentSerializedParticles;
@@ -134,6 +143,19 @@ int main() {
         double currentTemp = lastTemp;
         double ESS = 0.0;
         computeNextStep(rawWeights, rawLogLikelihoods, normalizedWeights, ESS, currentTemp, lastTemp, numParticles);
+
+        // Generate split posterior probabilities
+        splitPosteriorProbabilities.clear();
+        for(int n = 0; n < numParticles; n++){
+            for(std::string split : particleSplits[n]){
+                if (splitPosteriorProbabilities.count(split)) {
+                    splitPosteriorProbabilities[split] += normalizedWeights[i];
+                }
+                else {
+                    splitPosteriorProbabilities[split] = normalizedWeights[i];
+                }
+            }
+        }
 
         std::cout << std::format("{}\tTemp: {:.5f}\t ESS: {:.5f}", i, currentTemp, ESS) << std::endl;
 
@@ -168,22 +190,20 @@ int main() {
                 int particleID = assignments[n];
                 p.copyFromSerialized(currentSerializedParticles[particleID]);
 
-                mcmc.run(p, rejuvinationIterations, false, false, 1, 1, currentTemp, invar);
+                mcmc.run(p, rejuvinationIterations, splitPosteriorProbabilities, invar, currentTemp);
 
                 if(unif(gen) < 0.05){
-                    p.gibbsPartitionMove(currentTemp);
-                    p.refreshLikelihood();
-                    p.accept();
+                    //p.gibbsPartitionMove(currentTemp);
+                    //p.refreshLikelihood();
+                    //p.accept();
                 }
                 rawLogLikelihoods[n] = p.lnLikelihood();
                 rawWeights[n] = -1.0 * std::log(numParticles);
                 p.writeToSerialized(oldSerializedParticles[n]);
+
+                particleSplits[n] = p.getSplits();
             }
             std::swap(currentSerializedParticles, oldSerializedParticles);
-
-            // This is just easy for the serialized case since all particles are getting a lot of use
-            for(Particle& p : particles)
-                p.tune();
         }
 
         lastTemp = currentTemp;
@@ -201,22 +221,6 @@ int main() {
 
     for (int n = 0; n < numParticles; n++) {
         normalizedWeights[n] /= total;
-    }
-
-    // Get split posterior probabilities
-    std::unordered_map<std::string, double> splitPosteriorProbabilities;
-    std::vector<std::set<std::string>> particleSplits;
-    for(int i = 0; i < particles.size(); i++){
-        std::set<std::string> splitStrings = particles[i].getSplits();
-        particleSplits.push_back(splitStrings);
-        for(std::string split : splitStrings){
-            if (splitPosteriorProbabilities.count(split)) {
-                splitPosteriorProbabilities[split] += normalizedWeights[i];
-            }
-            else {
-                splitPosteriorProbabilities[split] = normalizedWeights[i];
-            }
-        }
     }
 
     std::vector<std::set<std::string>> deduped;

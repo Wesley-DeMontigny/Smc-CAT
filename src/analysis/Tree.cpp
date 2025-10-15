@@ -4,7 +4,6 @@
 #include <cassert>
 #include <algorithm>
 #include <iostream>
-#include <unordered_map>
 
 // Construct random tree with n tips and exponentially distributed branch lengths
 Tree::Tree(int n){
@@ -86,8 +85,10 @@ Tree::Tree(std::string newick, std::vector<std::string> taxaNames){
     for(std::string tok : tokens){
         if(tok == "("){
             TreeNode* newNode = addNode();
-            if(p == nullptr)
+            if(p == nullptr){
                 root = newNode;
+                newNode->isRoot = true;
+            }
             else{
                 p->descendants.insert(newNode);
                 newNode->ancestor = p;
@@ -362,6 +363,44 @@ std::set<std::string> Tree::getSplits(){
     return splits;
 }
 
+std::vector<std::string> Tree::getInternalSplitVec(){
+    // We are only able to explicitly skip the root this way because of how we assigned IDs above
+    std::vector<std::string> splits(nodes.size() - tips.size() - 1, "");
+    std::unordered_map<TreeNode*, std::string> splitString;
+    std::string zeroString = "";
+    for(int i = 0; i < tips.size(); i++)
+        zeroString += "0";
+
+    for(int i = 0; i < tips.size(); i++){
+        std::string tipString(zeroString);
+        tipString[i] = '1';
+        splitString[nodes[i].get()] = tipString;
+    }
+
+    for(TreeNode* n : postOrder){
+        if(!n->isTip && !n->isRoot){
+            std::string newString(zeroString);
+            for(TreeNode* d : n->descendants){
+                std::string descString = splitString[d];
+                for(int i = 0; i < tips.size(); i++){
+                    if(descString[i] == '1'){
+                        newString[i] = '1';
+                    }
+                }
+            }
+            std::string complementS = complementBinary(newString);
+            if(complementS < newString)
+                splits[n->id - tips.size() - 1] = complementS;
+            else
+                splits[n->id - tips.size() - 1] = newString;
+            
+            splitString[n] = newString;
+        }
+    }
+
+    return splits;
+}
+
 double Tree::scaleBranchMove(double delta, std::mt19937& gen){
     std::uniform_real_distribution unifDist(0.0, 1.0);
 
@@ -478,4 +517,102 @@ double Tree::NNIMove(std::mt19937& gen){
     regeneratePostOrder();
 
     return 0.0;
+}
+
+// Biased interior node selection using the oosterior probability of the split that it defines 
+double Tree::adaptiveNNIMove(double epsilon, std::mt19937& gen, const std::unordered_map<std::string, double>& splitPosterior){
+    std::uniform_real_distribution unifDist(0.0, 1.0);
+    
+    std::vector<std::string> currentSplits = getInternalSplitVec();
+    std::vector<double> nodeProbs(currentSplits.size(), 0.0);
+
+    double total = 0.0;
+    for(TreeNode* n : postOrder){
+        if(!n->isRoot && !n->isTip){
+            int internalID = n->id - tips.size() - 1;
+            total += epsilon;
+            nodeProbs[internalID] = epsilon;
+            if(splitPosterior.contains(currentSplits[internalID])){
+                double posteriorContribution = 1.0 - splitPosterior.at(currentSplits[internalID]);
+                nodeProbs[internalID] += posteriorContribution;
+                total += posteriorContribution;
+            }
+            else {
+                total += 1.0;
+                nodeProbs[internalID] += 1.0;
+            }
+        }
+    }
+
+    double randomNode = unifDist(gen);
+    double cumulativeSum = 0.0;
+    double selectedProb = 0.0;
+    int nodeID = 0;
+    for(int i = 0; i < nodeProbs.size(); i++){
+        double prob = nodeProbs[i]/total;
+        cumulativeSum += prob;
+        if(randomNode <= cumulativeSum){
+            selectedProb = prob;
+            nodeID = i + tips.size() + 1; // Remember that we are only considering the interior
+            break;
+        }
+    }
+
+    TreeNode* p = nodes[nodeID].get();
+    TreeNode* a = p->ancestor;
+
+    std::set<TreeNode*> neighbors1 = p->descendants;
+    TreeNode* n1 = chooseNodeFromSet(neighbors1, gen);
+
+    // We exclude
+    std::set<TreeNode*> neighbors2 = a->descendants;
+    neighbors2.erase(p);
+    TreeNode* n2 = chooseNodeFromSet(neighbors2, gen);
+
+    n1->ancestor = a;
+    n2->ancestor = p;
+    a->descendants.insert(n1);
+    p->descendants.insert(n2);
+    
+    auto it = p->descendants.find(n1);
+    if (it != p->descendants.end()) {
+        p->descendants.erase(it);
+    }
+    auto it2 = a->descendants.find(n2);
+    if (it2 != a->descendants.end()) {
+        a->descendants.erase(it2);
+    }
+
+    TreeNode* q = p;
+    do{
+        q->updateCL = true;
+        q = q->ancestor;
+    }
+    while(q != root);
+    root->updateCL = true;
+
+    regeneratePostOrder();
+
+    // Refresh the current splits and probabilities to compute the hastings ratio
+    currentSplits = getInternalSplitVec();
+    total = 0.0;
+    for(TreeNode* n : postOrder){
+        if(!n->isRoot && !n->isTip){
+            int internalID = n->id - tips.size() - 1;
+            total += epsilon;
+            nodeProbs[internalID] = epsilon;
+            if(splitPosterior.contains(currentSplits[internalID])){
+                double posteriorContribution = 1.0 - splitPosterior.at(currentSplits[internalID]);
+                nodeProbs[internalID] += posteriorContribution;
+                total += posteriorContribution;
+            }
+            else {
+                total += 1.0;
+                nodeProbs[internalID] += 1.0;
+            }
+        }
+    }
+    double revProb = nodeProbs[nodeID - tips.size() - 1] / total;
+
+    return std::log(revProb) - std::log(selectedProb);
 }

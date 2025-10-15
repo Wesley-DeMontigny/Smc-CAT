@@ -23,8 +23,8 @@ class Particle {
 
         void initialize(bool initInvar=false);
 
-        void refreshLikelihood(); // Refreshes the likelihood and stores it in the currentLnLikelihood variable
-        void forceLikelihoodUpdate() { currentPhylogeny.updateAll(); refreshLikelihood(); };
+        void refreshLikelihood(bool forceUpdate = false); // Refreshes the likelihood and stores it in the currentLnLikelihood variable
+        void forceLikelihoodUpdate() { refreshLikelihood(true); };
 
         double lnPrior();
         double lnLikelihood();
@@ -32,7 +32,7 @@ class Particle {
         void accept();
         void reject();
         
-        double topologyMove();
+        double topologyMove(const std::unordered_map<std::string, double>& splitPosterior);
         double branchMove();
         double stationaryMove();
         double invarMove();
@@ -61,6 +61,8 @@ class Particle {
         int acceptedStationary = 0;
         int proposedNNI = 0;
         int acceptedNNI = 0;
+        int proposedAdaptiveNNI = 0;
+        int acceptedAdaptiveNNI = 0;
         int proposedBranchLength = 0;
         int acceptedBranchLength = 0;
         int proposedSubtreeScale = 0;
@@ -70,6 +72,7 @@ class Particle {
         int proposedRate = 0;
         int acceptedRate = 0;
 
+        double aNNIEpsilon = 0.001; // The offset for probabilities in the adaptive NNI. This can be thought of as the probability of selecting an edge with posterior of 1.0
         double shapeDelta = 1.0; // Delta to scale the shape of the gamma distribution
         double scaleDelta = 1.0; // Delta to scale an individual branch length
         double subtreeScaleDelta = 1.0; // Delta to scale whole subtrees
@@ -90,6 +93,7 @@ class Particle {
 
         bool updateStationary = false;
         bool updateNNI = false;
+        bool updateAdaptiveNNI = false;
         bool updateBranchLength = false;
         bool updateScaleSubtree = false;
         bool updateInvar = false;

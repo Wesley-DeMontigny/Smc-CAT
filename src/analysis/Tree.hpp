@@ -5,6 +5,7 @@
 #include <vector>
 #include <memory>
 #include <random>
+#include <unordered_map>
 
 /*
 
@@ -41,6 +42,7 @@ class Tree {
         std::vector<TreeNode*>& getPostOrder() {return postOrder;}
         std::vector<TreeNode*>& getTips() {return tips;}
         std::set<std::string> getSplits();
+        std::vector<std::string> getInternalSplitVec();
 
         const int getNumNodes() {return postOrder.size();}
         const int getNumTaxa() {return tips.size();}
@@ -48,6 +50,7 @@ class Tree {
 
         double scaleBranchMove(double delta, std::mt19937& gen);
         double scaleSubtreeMove(double delta, std::mt19937& gen);
+        double adaptiveNNIMove(double epsilon, std::mt19937& gen, const std::unordered_map<std::string, double>& splitPosterior);
         double NNIMove(std::mt19937& gen);
 
         void updateAll();

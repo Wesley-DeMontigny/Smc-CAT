@@ -203,15 +203,16 @@ void Particle::copyFromSerialized(SerializedParticle& sp){
     std::chrono::steady_clock::time_point preTransProb = std::chrono::steady_clock::now();
     #endif
 
-    currentTransitionProbabilityClasses.reserve(sp.stationaries.size());
-    if(sp.stationaries.size() < currentTransitionProbabilityClasses.size()){
-        int numToDelete = currentTransitionProbabilityClasses.size() - sp.stationaries.size();
-        currentTransitionProbabilityClasses.erase(currentTransitionProbabilityClasses.end() - numToDelete, currentTransitionProbabilityClasses.end());
-    }
+    int oldSize = currentTransitionProbabilityClasses.size();
+    int targetSize = sp.stationaries.size();
+    if(oldSize > targetSize)
+        currentTransitionProbabilityClasses.erase(
+            currentTransitionProbabilityClasses.begin() + targetSize,
+            currentTransitionProbabilityClasses.end()
+        );
 
-    int numExisting = currentTransitionProbabilityClasses.size();
-    for (int i = 0; i < sp.stationaries.size(); i++) {
-        if(i < numExisting){
+    for (int i = 0; i < targetSize; i++) {
+        if(i < oldSize){
             TransitionProbabilityClass& cls = currentTransitionProbabilityClasses[i];
 
             cls.stationaryDistribution = sp.stationaries[i];
@@ -466,7 +467,7 @@ void Particle::read(int id, std::string& dir){
 void Particle::accept(){
     oldLnLikelihood = currentLnLikelihood;
 
-    if(updateNNI || updateBranchLength){
+    if(updateNNI || updateBranchLength || updateScaleSubtree || updateAdaptiveNNI){
         oldPhylogeny = currentPhylogeny;
     }
 
@@ -480,7 +481,7 @@ void Particle::accept(){
         oldConditionalLikelihoodFlags.get()
     );
     
-    if(updateBranchLength || updateStationary || updateScaleSubtree || updateRate){
+    if(updateBranchLength || updateStationary || updateScaleSubtree || updateRate || updateAdaptiveNNI){
         oldTransitionProbabilityClasses = currentTransitionProbabilityClasses;
         oldRates = currentRates;
         oldShape = currentShape;
@@ -489,21 +490,16 @@ void Particle::accept(){
     oldPInvar = currentPInvar;
 
     acceptedNNI += (int)updateNNI;
+    acceptedAdaptiveNNI += (int)updateAdaptiveNNI;
     acceptedBranchLength += (int)updateBranchLength;
     acceptedStationary += (int)updateStationary;
     acceptedSubtreeScale += (int)updateScaleSubtree;
     acceptedInvar += (int)updateInvar;
     acceptedRate += (int)updateRate;
 
-    proposedNNI += (int)updateNNI;
-    proposedBranchLength += (int)updateBranchLength;
-    proposedStationary += (int)updateStationary;
-    proposedSubtreeScale += (int)updateScaleSubtree;
-    proposedInvar += (int)updateInvar;
-    proposedRate += (int)updateRate;
-
     updateStationary = false;
     updateNNI = false;
+    updateAdaptiveNNI = false;
     updateBranchLength = false;
     updateScaleSubtree = false;
     updateInvar = false;
@@ -513,7 +509,7 @@ void Particle::accept(){
 void Particle::reject(){
     currentLnLikelihood = oldLnLikelihood;
 
-    if(updateNNI || updateBranchLength || updateScaleSubtree){
+    if(updateNNI || updateBranchLength || updateScaleSubtree || updateAdaptiveNNI){
         currentPhylogeny = oldPhylogeny;
     }
 
@@ -527,7 +523,7 @@ void Particle::reject(){
         currentConditionalLikelihoodFlags.get()
     );
 
-    if(updateBranchLength || updateStationary || updateScaleSubtree || updateRate){
+    if(updateBranchLength || updateStationary || updateScaleSubtree || updateRate || updateAdaptiveNNI){
         currentTransitionProbabilityClasses = oldTransitionProbabilityClasses;
         currentRates = oldRates;
         currentShape = oldShape;
@@ -535,15 +531,9 @@ void Particle::reject(){
 
     currentPInvar = oldPInvar;
 
-    proposedNNI += (int)updateNNI;
-    proposedBranchLength += (int)updateBranchLength;
-    proposedStationary += (int)updateStationary;
-    proposedSubtreeScale += (int)updateScaleSubtree;
-    proposedInvar += (int)updateInvar;
-    proposedRate += (int)updateRate;
-
     updateStationary = false;
     updateNNI = false;
+    updateAdaptiveNNI = false;
     updateBranchLength = false;
     updateBranchLength = false;
     updateInvar = false;
@@ -591,7 +581,7 @@ void Particle::setAssignments(std::vector<int>& assignments) {
     }
 }
 
-void Particle::refreshLikelihood(){
+void Particle::refreshLikelihood(bool forceUpdate){
     auto postOrder = currentPhylogeny.getPostOrder();
 
     #if TIME_PROFILE==1
@@ -632,7 +622,7 @@ void Particle::refreshLikelihood(){
 
     // Change the working space for everything that will need a CL update
     for(auto n : postOrder){
-        if(n->updateCL){
+        if(n->updateCL || forceUpdate){
             currentConditionalLikelihoodFlags[n->id] ^= 1;
         }
     }
@@ -648,7 +638,7 @@ void Particle::refreshLikelihood(){
     for(auto n : postOrder){
         int nIndex = n->id;
         uint8_t nWorkingSpace = currentConditionalLikelihoodFlags[nIndex];
-        if(n->updateCL && !n->isTip){ // Tips never need their CL buffer updated because it just defined by the data
+        if((n->updateCL || forceUpdate) && !n->isTip){ // Tips never need their CL buffer updated because it just defined by the data
             auto pN = conditionaLikelihoodBuffer.get() + (nIndex * nodeSpacer) + (nWorkingSpace * fullSpacer);
             for(int i = 0; i < nodeSpacer; i++){
                 pN[i].setOnes();
@@ -741,11 +731,22 @@ void Particle::refreshLikelihood(){
     currentLnLikelihood = lnL;
 }
 
-double Particle::topologyMove(){
+double Particle::topologyMove(const std::unordered_map<std::string, double>& splitPosterior){
     auto generator = std::mt19937(std::random_device{}());
+    std::uniform_real_distribution unifDist(0.0, 1.0);
+    
+    double hastings = 0.0;
 
-    double hastings = currentPhylogeny.NNIMove(generator);
-    updateNNI = true;
+    if(unifDist(generator) < 0.5){
+        hastings = currentPhylogeny.NNIMove(generator);
+        updateNNI = true;
+        proposedNNI++;
+    }
+    else{
+        hastings = currentPhylogeny.adaptiveNNIMove(aNNIEpsilon, generator, splitPosterior);
+        updateAdaptiveNNI = true;
+        proposedAdaptiveNNI++;
+    }
 
     return hastings;
 }
@@ -759,10 +760,12 @@ double Particle::branchMove(){
     if(unifDist(generator) < 0.75){
         hastings = currentPhylogeny.scaleBranchMove(scaleDelta, generator);
         updateBranchLength = true;
+        proposedBranchLength++;
     }
     else {
         hastings = currentPhylogeny.scaleSubtreeMove(subtreeScaleDelta, generator);
         updateScaleSubtree = true;
+        proposedSubtreeScale++;
     }
 
     return hastings;
@@ -794,6 +797,7 @@ double Particle::stationaryMove(){
 
     double hastings = currentTransitionProbabilityClasses[randCategory].dirichletSimplexMove(stationaryAlpha, generator);
     updateStationary = true;
+    proposedStationary++;
     currentPhylogeny.updateAll();
 
     return hastings;
@@ -815,6 +819,7 @@ double Particle::invarMove(){
     currentPInvar = newPInvar;
 
     updateInvar = true;
+    proposedInvar++;
 
     return backward - forward;
 }
@@ -829,6 +834,7 @@ double Particle::shapeMove(){
     currentShape = newV;
 
     updateRate = true;
+    proposedRate++;
     currentPhylogeny.updateAll();
     currentRates = Math::getGammaDiscretization(numRates, currentShape);
 
