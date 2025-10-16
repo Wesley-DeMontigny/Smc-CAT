@@ -1,5 +1,6 @@
 #include "Mcmc.hpp"
 #include "analysis/Particle.hpp"
+#include "core/RandomVariable.hpp"
 #include <random>
 #include <cmath>
 #include <iostream>
@@ -8,8 +9,7 @@
 Mcmc::Mcmc(void) {}
 
 double Mcmc::run(Particle& model, int iterations, const std::unordered_map<std::string, double>& splitPosterior, bool updateInvar, double tempering){
-    std::mt19937 generator(std::random_device{}());
-    std::uniform_real_distribution unif(0.0,1.0);
+    auto& rng = RandomVariable::randomVariableInstance();
 
     model.refreshLikelihood();
     double currentLikelihood = model.lnLikelihood() * tempering;
@@ -19,7 +19,7 @@ double Mcmc::run(Particle& model, int iterations, const std::unordered_map<std::
     bool sampleAlpha = model.getNumRates() > 1;
 
     for(int i = 0; i < iterations; i++){
-        double moveChoice = unif(generator);
+        double moveChoice = rng.uniformRv();
 
         std::function<double(Particle&)> proposal;
         int numGibbs = 2;
@@ -52,7 +52,7 @@ double Mcmc::run(Particle& model, int iterations, const std::unordered_map<std::
             double newPosterior = newPrior + newLikelihood;
             double posteriorRatio = newPosterior - currentPosterior + hastings;
 
-            if(std::log(unif(generator)) <= posteriorRatio){
+            if(std::log(rng.uniformRv()) <= posteriorRatio){
                 model.accept();
                 currentPosterior = newPosterior;
                 currentPrior = newPrior;
