@@ -271,20 +271,16 @@ std::string Tree::generateNewick(){
     return output;
 }
 
-void Tree::regeneratePostOrder(){
-    postOrder.clear();
+std::string Tree::generateNewick(std::unordered_map<std::string, double>& splitPosteriorProbabilities){
+    std::vector<std::string> splits = getInternalSplitVec();
 
-    recursivePostOrderAssign(root);
-}
+    std::string output = "";
 
-void Tree::recursivePostOrderAssign(TreeNode* p){
-    if(! p->isTip){
-        for(auto child : p->descendants) {
-            recursivePostOrderAssign(child);
-        }
-    }
+    output = recursiveNewickGenerate(output, root, splitPosteriorProbabilities, splits);
 
-    postOrder.push_back(p);
+    output += ";";
+
+    return output;
 }
 
 std::string Tree::recursiveNewickGenerate(std::string s, TreeNode* p){
@@ -306,6 +302,45 @@ std::string Tree::recursiveNewickGenerate(std::string s, TreeNode* p){
     }
 
     return s;
+}
+
+std::string Tree::recursiveNewickGenerate(std::string s, TreeNode* p, std::unordered_map<std::string, double>& splitPosteriorProbabilities, std::vector<std::string>& splitVec){
+    if(! p->isTip){
+        s += "(";
+        for(auto child : p->descendants) {
+            s = recursiveNewickGenerate(s, child, splitPosteriorProbabilities, splitVec);
+            s += ",";
+        }
+        s.pop_back();
+        s += ")";
+
+        if(p != root){
+            s += "[&label=";
+            s += std::to_string(splitPosteriorProbabilities[splitVec[p->id - tips.size() - 1]]);
+            s += "]:" + std::to_string(p->branchLength);
+        }
+    }
+    else {
+        s += p->name + ":" + std::to_string(p->branchLength);
+    }
+
+    return s;
+}
+
+void Tree::regeneratePostOrder(){
+    postOrder.clear();
+
+    recursivePostOrderAssign(root);
+}
+
+void Tree::recursivePostOrderAssign(TreeNode* p){
+    if(! p->isTip){
+        for(auto child : p->descendants) {
+            recursivePostOrderAssign(child);
+        }
+    }
+
+    postOrder.push_back(p);
 }
 
 void Tree::updateAll(){

@@ -41,6 +41,7 @@ class Particle {
         void tune(); // Tune the proposal parameters
 
         std::string getNewick() { return currentPhylogeny.generateNewick(); }
+        std::string getNewick(std::unordered_map<std::string, double>& splitPosteriorProbabilities) { return currentPhylogeny.generateNewick(splitPosteriorProbabilities); }
         int getNumCategories() { return currentTransitionProbabilityClasses.size(); }
         int getNumNodes() { return numNodes; }
         int getNumRates() { return numRates; }

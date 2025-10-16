@@ -79,7 +79,7 @@ void computeNextStep(std::vector<double>& rawWeights, std::vector<double>& rawLo
 
 int main() {
     int numParticles = 500;
-    int rejuvinationIterations = 5;
+    int rejuvinationIterations = 10;
     int numThreads = omp_get_max_threads();
     omp_set_num_threads(numThreads);
     bool invar = false;
@@ -245,7 +245,9 @@ int main() {
         }
     }
 
-    std::cout << currentSerializedParticles[maxID].newick << std::endl;
+    particles[0].copyFromSerialized(currentSerializedParticles[maxID]);
+
+    std::cout << particles[0].getNewick(splitPosteriorProbabilities) << std::endl;
 
     std::chrono::steady_clock::time_point postAnalysis = std::chrono::steady_clock::now();
     std::cout << "The analysis completed in " << std::chrono::duration_cast<std::chrono::minutes>(postAnalysis - preAnalysis).count() << "[minutes]" << std::endl;

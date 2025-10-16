@@ -38,6 +38,7 @@ class Tree {
         Tree& operator=(const Tree& t);
         ~Tree();
 
+        std::string generateNewick(std::unordered_map<std::string, double>& splitPosteriorProbabilities);
         std::string generateNewick(); // Generates a Newick string for the tree. Assumes the post-order is correct.
         std::vector<TreeNode*>& getPostOrder() {return postOrder;}
         std::vector<TreeNode*>& getTips() {return tips;}
@@ -69,6 +70,7 @@ class Tree {
 
         void recursivePostOrderAssign(TreeNode* p);
         std::string recursiveNewickGenerate(std::string s, TreeNode* p);
+        std::string recursiveNewickGenerate(std::string s, TreeNode* p, std::unordered_map<std::string, double>& splitPosteriorProbabilities, std::vector<std::string>& splitVec);
 };
 
 #endif
