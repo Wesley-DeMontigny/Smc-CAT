@@ -49,10 +49,10 @@ class Tree {
         const int getNumTaxa() {return tips.size();}
         TreeNode* getRoot() {return root;}
 
-        double scaleBranchMove(double delta, std::mt19937& gen);
-        double scaleSubtreeMove(double delta, std::mt19937& gen);
-        double adaptiveNNIMove(double epsilon, std::mt19937& gen, const std::unordered_map<std::string, double>& splitPosterior);
-        double NNIMove(std::mt19937& gen);
+        double scaleBranchMove(double delta);
+        double scaleSubtreeMove(double delta);
+        double adaptiveNNIMove(double epsilon,const std::unordered_map<std::string, double>& splitPosterior);
+        double NNIMove();
 
         void updateAll();
     private:

@@ -1,4 +1,6 @@
 #include "Tree.hpp"
+#include "core/RandomVariable.hpp"
+#include "core/Probability.hpp"
 #include <memory>
 #include <random>
 #include <cassert>
@@ -9,7 +11,7 @@
 Tree::Tree(int n){
     assert(n >= 3);
 
-    auto generator = std::mt19937(std::random_device{}());
+    auto& rng = RandomVariable::randomVariableInstance();
 
     root = addNode();
     root->isRoot = true;
@@ -32,8 +34,7 @@ Tree::Tree(int n){
     tips.push_back(B);
 
     for(int i = 2; i < n; i++){
-        std::uniform_int_distribution<int> dist(0,i-1);
-        int randomIndex = dist(generator);
+        int randomIndex = (int)(rng.uniformRv() * i);
         auto randomTip = tips[randomIndex];
 
         auto newInternal = addNode();
@@ -165,11 +166,10 @@ Tree::Tree(std::string newick, std::vector<std::string> taxaNames){
 }
 
 TreeNode* Tree::addNode() {
-    auto generator = std::mt19937(std::random_device{}());
-    std::exponential_distribution<double> branchDist(10.0);
+    auto& rng = RandomVariable::randomVariableInstance();
 
     auto newNode = std::make_unique<TreeNode>(
-        TreeNode{0, "", false, false, branchDist(generator), nullptr, {}, false, false}
+        TreeNode{0, "", false, false, Probability::Exponential::rv(&rng, 10.0), nullptr, {}, false, false}
     );
 
     TreeNode* rawPtr = newNode.get();
@@ -315,9 +315,8 @@ std::string Tree::recursiveNewickGenerate(std::string s, TreeNode* p, std::unord
         s += ")";
 
         if(p != root){
-            s += "[&label=";
             s += std::to_string(splitPosteriorProbabilities[splitVec[p->id - tips.size() - 1]]);
-            s += "]:" + std::to_string(p->branchLength);
+            s += ":" + std::to_string(p->branchLength);
         }
     }
     else {
@@ -436,17 +435,17 @@ std::vector<std::string> Tree::getInternalSplitVec(){
     return splits;
 }
 
-double Tree::scaleBranchMove(double delta, std::mt19937& gen){
-    std::uniform_real_distribution unifDist(0.0, 1.0);
+double Tree::scaleBranchMove(double delta){
+    auto& rng = RandomVariable::randomVariableInstance();
 
     TreeNode* p = nullptr;
     do{
-        p = nodes[(int)(unifDist(gen) * nodes.size())].get();
+        p = nodes[(int)(rng.uniformRv() * nodes.size())].get();
     }
     while(p == root);
 
     double currentV = p->branchLength;
-    double scale = std::exp(delta * (unifDist(gen) - 0.5));
+    double scale = std::exp(delta * (rng.uniformRv() - 0.5));
     double newV = currentV * scale;
     p->branchLength = newV;
     p->updateTP = true;
@@ -474,17 +473,17 @@ int scaleSubtreeRecurse(TreeNode* n, double val){
     return c + 1;
 }
 
-double Tree::scaleSubtreeMove(double delta, std::mt19937& gen){
-    std::uniform_real_distribution unifDist(0.0, 1.0);
+double Tree::scaleSubtreeMove(double delta){
+    auto& rng = RandomVariable::randomVariableInstance();
 
 
     TreeNode* p = nullptr;
     do{
-        p = nodes[(int)(unifDist(gen) * nodes.size())].get();
+        p = nodes[(int)(rng.uniformRv() * nodes.size())].get();
     }
     while(p == root);
 
-    double scale = std::exp(delta * (unifDist(gen) - 0.5));
+    double scale = std::exp(delta * (rng.uniformRv() - 0.5));
     int numBranches = scaleSubtreeRecurse(p, scale);
 
     TreeNode* q = p->ancestor;
@@ -497,10 +496,10 @@ double Tree::scaleSubtreeMove(double delta, std::mt19937& gen){
     return numBranches * std::log(scale);
 }
 
-TreeNode* chooseNodeFromSet(const std::set<TreeNode*>& s, std::mt19937& gen){
-    std::uniform_int_distribution<> dist(0, s.size() - 1);
+TreeNode* chooseNodeFromSet(const std::set<TreeNode*>& s){
+   auto& rng = RandomVariable::randomVariableInstance();
 
-    int index = dist(gen);
+    int index = (int)(rng.uniformRv() * s.size());
 
     auto it = s.begin();
     std::advance(it, index);
@@ -508,24 +507,24 @@ TreeNode* chooseNodeFromSet(const std::set<TreeNode*>& s, std::mt19937& gen){
     return *it;
 }
 
-double Tree::NNIMove(std::mt19937& gen){
-    std::uniform_real_distribution unifDist(0.0, 1.0);
+double Tree::NNIMove(){
+    auto& rng = RandomVariable::randomVariableInstance();
 
     TreeNode* p = nullptr;
     do{
-        p = nodes[(int)(unifDist(gen) * nodes.size())].get();
+        p = nodes[(int)(rng.uniformRv() * nodes.size())].get();
     }
     while(p == root || p->isTip);
 
     TreeNode* a = p->ancestor;
 
     std::set<TreeNode*> neighbors1 = p->descendants;
-    TreeNode* n1 = chooseNodeFromSet(neighbors1, gen);
+    TreeNode* n1 = chooseNodeFromSet(neighbors1);
 
     // We exclude
     std::set<TreeNode*> neighbors2 = a->descendants;
     neighbors2.erase(p);
-    TreeNode* n2 = chooseNodeFromSet(neighbors2, gen);
+    TreeNode* n2 = chooseNodeFromSet(neighbors2);
 
     n1->ancestor = a;
     n2->ancestor = p;
@@ -554,9 +553,9 @@ double Tree::NNIMove(std::mt19937& gen){
     return 0.0;
 }
 
-// Biased interior node selection using the oosterior probability of the split that it defines 
-double Tree::adaptiveNNIMove(double epsilon, std::mt19937& gen, const std::unordered_map<std::string, double>& splitPosterior){
-    std::uniform_real_distribution unifDist(0.0, 1.0);
+// Biased interior node selection using the posterior probability of the split that node creates. Inspired by X Meyer 2021
+double Tree::adaptiveNNIMove(double epsilon, const std::unordered_map<std::string, double>& splitPosterior){
+    auto& rng = RandomVariable::randomVariableInstance();
     
     std::vector<std::string> currentSplits = getInternalSplitVec();
     std::vector<double> nodeProbs(currentSplits.size(), 0.0);
@@ -568,7 +567,7 @@ double Tree::adaptiveNNIMove(double epsilon, std::mt19937& gen, const std::unord
             total += epsilon;
             nodeProbs[internalID] = epsilon;
             if(splitPosterior.contains(currentSplits[internalID])){
-                double posteriorContribution = 1.0 - splitPosterior.at(currentSplits[internalID]);
+                double posteriorContribution = std::clamp(1.0 - splitPosterior.at(currentSplits[internalID]), 0.0, 1.0);
                 nodeProbs[internalID] += posteriorContribution;
                 total += posteriorContribution;
             }
@@ -579,7 +578,7 @@ double Tree::adaptiveNNIMove(double epsilon, std::mt19937& gen, const std::unord
         }
     }
 
-    double randomNode = unifDist(gen);
+    double randomNode = rng.uniformRv();
     double cumulativeSum = 0.0;
     double selectedProb = 0.0;
     int nodeID = 0;
@@ -597,12 +596,12 @@ double Tree::adaptiveNNIMove(double epsilon, std::mt19937& gen, const std::unord
     TreeNode* a = p->ancestor;
 
     std::set<TreeNode*> neighbors1 = p->descendants;
-    TreeNode* n1 = chooseNodeFromSet(neighbors1, gen);
+    TreeNode* n1 = chooseNodeFromSet(neighbors1);
 
     // We exclude
     std::set<TreeNode*> neighbors2 = a->descendants;
     neighbors2.erase(p);
-    TreeNode* n2 = chooseNodeFromSet(neighbors2, gen);
+    TreeNode* n2 = chooseNodeFromSet(neighbors2);
 
     n1->ancestor = a;
     n2->ancestor = p;
@@ -637,7 +636,7 @@ double Tree::adaptiveNNIMove(double epsilon, std::mt19937& gen, const std::unord
             total += epsilon;
             nodeProbs[internalID] = epsilon;
             if(splitPosterior.contains(currentSplits[internalID])){
-                double posteriorContribution = 1.0 - splitPosterior.at(currentSplits[internalID]);
+                double posteriorContribution = std::clamp(1.0 - splitPosterior.at(currentSplits[internalID]), 0.0, 1.0);
                 nodeProbs[internalID] += posteriorContribution;
                 total += posteriorContribution;
             }

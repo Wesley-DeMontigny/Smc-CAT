@@ -9,6 +9,8 @@
 #include "analysis/RateMatrices.hpp"
 #include "analysis/Particle.hpp"
 #include "core/Alignment.hpp"
+#include "core/Probability.hpp"
+#include "core/RandomVariable.hpp"
 #include "analysis/Mcmc.hpp"
 
 void computeNextStep(std::vector<double>& rawWeights, std::vector<double>& rawLogLikelihoods, 
@@ -83,11 +85,9 @@ int main() {
     int numThreads = omp_get_max_threads();
     omp_set_num_threads(numThreads);
     bool invar = false;
-    int numRates = 4;
+    int numRates = 6;
 
-    std::mt19937 gen = std::mt19937(std::random_device{}());
-    std::uniform_real_distribution unif(0.0, 1.0);
-    std::uniform_real_distribution systematicUnif(0.0, 1.0/numParticles);
+    auto& rng = RandomVariable::randomVariableInstance();
     
     std::vector<double> rawLogLikelihoods(numParticles, 0);
     std::vector<double> rawWeights(numParticles, -1.0 * std::log(numParticles));
@@ -162,7 +162,7 @@ int main() {
             std::cout << "Resampling Particles..." << std::endl;
 
             // Systematic resampling
-            double u = systematicUnif(gen);
+            double u = rng.uniformRv() / (double)numParticles;
             std::vector<int> assignments;
             assignments.reserve(numParticles);
             double cumulative = normalizedWeights[0];
@@ -191,7 +191,7 @@ int main() {
 
                 mcmc.run(p, rejuvinationIterations, splitPosteriorProbabilities, invar, currentTemp);
 
-                if(unif(gen) < 0.05){
+                if(rng.uniformRv() < 0.05){
                     //p.gibbsPartitionMove(currentTemp);
                     //p.refreshLikelihood();
                     //p.accept();

@@ -1,5 +1,6 @@
 #include "TransitionProbabilityClass.hpp"
-#include <core/Math.hpp>
+#include "core/Probability.hpp"
+#include "core/RandomVariable.hpp"
 #include <eigen3/Eigen/Eigenvalues>
 #include <iostream>
 
@@ -16,22 +17,33 @@ TransitionProbabilityClass::TransitionProbabilityClass(int n, int c, Eigen::Matr
     workingMatrix2 = Eigen::Matrix<Eigen::dcomplex, 20, 20>::Zero();
     workingDiag = Eigen::DiagonalMatrix<Eigen::dcomplex, 20>{};
 
-    auto generator = std::mt19937(std::random_device{}());
-    stationaryDistribution = sampleStationary(Eigen::Vector<double, 20>::Ones(), generator);
+    stationaryDistribution = sampleStationary(Eigen::Vector<double, 20>::Ones());
 }
 
-Eigen::Vector<double, 20> TransitionProbabilityClass::sampleStationary(Eigen::Vector<double, 20> alpha, std::mt19937& gen){
+Eigen::Vector<double, 20> TransitionProbabilityClass::sampleStationary(const Eigen::Vector<double, 20>& alpha){
+    auto& rng = RandomVariable::randomVariableInstance();
     Eigen::Vector<double, 20> stationaryDistribution = Eigen::Vector<double, 20>::Zero();
 
     double denom = 0.0;
     for (size_t i = 0; i < 20; ++i) {
-        std::gamma_distribution<double> gammaDist(alpha(i), 1.0);
-        double randGamma = gammaDist(gen);
+        double randGamma = Probability::Gamma::rv(&rng, alpha(i), 1.0);
         stationaryDistribution(i) = randGamma;
         denom += randGamma;
     }
 
     return stationaryDistribution / denom;
+}
+
+double TransitionProbabilityClass::stationarylnPdf(const Eigen::Vector<double, 20>& alpha, 
+                                                   const Eigen::Vector<double, 20>& x) {
+    double alpha0 = alpha.sum();
+    double lnPdf = std::lgamma(alpha0);
+
+    for(int i = 0; i < 20; i++){
+        lnPdf -= std::lgamma(alpha[i]);
+        lnPdf += (alpha[i] - 1.0) * std::log(x[i]);
+    }
+    return lnPdf;
 }
 
 
@@ -69,17 +81,17 @@ void TransitionProbabilityClass::recomputeTransitionProbs(int n, double t, int c
     transitionProbabilities[n*numRates + c] = workingMatrix2.real();
 }
 
-double TransitionProbabilityClass::dirichletSimplexMove(double alpha, std::mt19937& gen){
+double TransitionProbabilityClass::dirichletSimplexMove(double alpha){
     Eigen::Vector<double, 20> concentrations = stationaryDistribution;
     concentrations *= alpha;
 
-    Eigen::Vector<double, 20> newStationaryDistribution = sampleStationary(concentrations, gen);
+    Eigen::Vector<double, 20> newStationaryDistribution = sampleStationary(concentrations);
 
     Eigen::Vector<double, 20> revConcentrations = newStationaryDistribution;
     revConcentrations *= alpha;
 
-    double forward = Math::stationaryDirichletLogPDF(newStationaryDistribution, concentrations);
-    double backward = Math::stationaryDirichletLogPDF(stationaryDistribution, revConcentrations);
+    double forward = stationarylnPdf(concentrations, newStationaryDistribution);
+    double backward = stationarylnPdf(revConcentrations, stationaryDistribution);
 
     stationaryDistribution = newStationaryDistribution;
     double total = stationaryDistribution.sum();

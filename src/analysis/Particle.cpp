@@ -3,7 +3,8 @@
 #include "core/Alignment.hpp"
 #include "RateMatrices.hpp"
 #include "H5Cpp.h"
-#include "core/Math.hpp"
+#include "core/Probability.hpp"
+#include "core/RandomVariable.hpp"
 #include "SerializedParticle.hpp"
 #include <string>
 #include <vector>
@@ -78,6 +79,8 @@ Particle::Particle(Alignment& aln, int nR, bool initInvar) :
 }
 
 void Particle::initialize(bool initInvar){
+    auto& rng = RandomVariable::randomVariableInstance();
+
     // We waste a little bit of compute the first time we initilize this particle object, but this is easiest right now
     currentPhylogeny = Tree(aln.getTaxaNames());
 
@@ -88,26 +91,22 @@ void Particle::initialize(bool initInvar){
 
     currentTransitionProbabilityClasses.clear();
 
-    auto generator = std::mt19937(std::random_device{}());
-    std::uniform_real_distribution unifDist(0.0, 1.0);
-    std::gamma_distribution gammaDist(3.0, 2.0); // Prior on alpha (shape, scale)
-    
     // I am just going to assume a uniform prior for now
     if(initInvar){
-        currentPInvar = unifDist(generator);
+        currentPInvar = rng.uniformRv();
         oldPInvar = currentPInvar;
     }
 
     if(numRates > 1){
-        currentShape = gammaDist(generator);
+        currentShape = Probability::Gamma::rv(&rng, 3.0, 2.0);
         oldShape = currentShape;
-        currentRates = Math::getGammaDiscretization(numRates, currentShape);
+        Probability::Gamma::discretization(currentRates, 3.0, 2.0, numRates, true);
         oldRates = currentRates;
     }
 
     // Initialize the Chinese Restaurant Process
     for(int i = 0; i < numChar; i++){
-        double randomVal = unifDist(generator);
+        double randomVal = rng.uniformRv();
         double total = dppAlpha/(i + dppAlpha);
 
         // If new category
@@ -186,7 +185,7 @@ void Particle::copyFromSerialized(SerializedParticle& sp){
     currentPInvar = sp.pInvar;
     
     if(numRates > 1)
-        currentRates = Math::getGammaDiscretization(numRates, currentShape);
+        Probability::Gamma::discretization(currentRates, 3.0, 2.0, numRates, true);
 
     std::vector<TreeNode*>& nodes = currentPhylogeny.getPostOrder();
 
@@ -524,10 +523,10 @@ double Particle::lnPrior(){
     for(auto n : currentPhylogeny.getPostOrder()){
         lengthSum += n->branchLength;
     }
-    lnP += Math::gammaLogPDF(lengthSum, shape, treeRate);
+    lnP += Probability::Gamma::lnPdf(shape, treeRate, lengthSum);
 
     // Shape prior
-    lnP += Math::gammaLogPDF(currentShape, 3.0, 0.5);
+    lnP += Probability::Gamma::lnPdf(3.0, 0.5, currentShape);
 
     // For now we will assume flat priors on the stationary
     lnP += std::log(dppAlpha) * currentTransitionProbabilityClasses.size();
@@ -701,18 +700,16 @@ void Particle::refreshLikelihood(bool forceUpdate){
 }
 
 double Particle::topologyMove(const std::unordered_map<std::string, double>& splitPosterior){
-    auto generator = std::mt19937(std::random_device{}());
-    std::uniform_real_distribution unifDist(0.0, 1.0);
-    
+    auto& rng = RandomVariable::randomVariableInstance();
     double hastings = 0.0;
 
-    if(unifDist(generator) < 0.5){
-        hastings = currentPhylogeny.NNIMove(generator);
+    if(rng.uniformRv() < 0.5){
+        hastings = currentPhylogeny.NNIMove();
         updateNNI = true;
         proposedNNI++;
     }
     else{
-        hastings = currentPhylogeny.adaptiveNNIMove(aNNIEpsilon, generator, splitPosterior);
+        hastings = currentPhylogeny.adaptiveNNIMove(aNNIEpsilon, splitPosterior);
         updateAdaptiveNNI = true;
         proposedAdaptiveNNI++;
     }
@@ -721,18 +718,16 @@ double Particle::topologyMove(const std::unordered_map<std::string, double>& spl
 }
 
 double Particle::branchMove(){
-    auto generator = std::mt19937(std::random_device{}());
-    std::uniform_real_distribution unifDist(0.0, 1.0);
-
+    auto& rng = RandomVariable::randomVariableInstance();
     double hastings = 0.0;
 
-    if(unifDist(generator) < 0.75){
-        hastings = currentPhylogeny.scaleBranchMove(scaleDelta, generator);
+    if(rng.uniformRv() < 0.75){
+        hastings = currentPhylogeny.scaleBranchMove(scaleDelta);
         updateBranchLength = true;
         proposedBranchLength++;
     }
     else {
-        hastings = currentPhylogeny.scaleSubtreeMove(subtreeScaleDelta, generator);
+        hastings = currentPhylogeny.scaleSubtreeMove(subtreeScaleDelta);
         updateScaleSubtree = true;
         proposedSubtreeScale++;
     }
@@ -741,8 +736,7 @@ double Particle::branchMove(){
 }
 
 double Particle::stationaryMove(){
-    auto generator = std::mt19937(std::random_device{}());
-    auto unifDist = std::uniform_real_distribution(0.0, 1.0);
+    auto& rng = RandomVariable::randomVariableInstance();
 
     std::vector<double> weights;
     weights.reserve(currentTransitionProbabilityClasses.size());
@@ -753,7 +747,7 @@ double Particle::stationaryMove(){
         weights.push_back(classSize);
     }
 
-    double randomDraw = unifDist(generator) * total;
+    double randomDraw = rng.uniformRv() * total;
     int randCategory = 0;
     double cumSum = 0.0;
     for(int i = 0; i < weights.size(); i++){
@@ -764,7 +758,7 @@ double Particle::stationaryMove(){
         }
     }
 
-    double hastings = currentTransitionProbabilityClasses[randCategory].dirichletSimplexMove(stationaryAlpha, generator);
+    double hastings = currentTransitionProbabilityClasses[randCategory].dirichletSimplexMove(stationaryAlpha);
     updateStationary = true;
     proposedStationary++;
     currentPhylogeny.updateAll();
@@ -773,17 +767,17 @@ double Particle::stationaryMove(){
 }
 
 double Particle::invarMove(){
-    auto generator = std::mt19937(std::random_device{}());
+    auto& rng = RandomVariable::randomVariableInstance();
 
     double a = invarAlpha + 1.0;
     double b = (invarAlpha / currentPInvar) - a + 2.0;
-    double newPInvar = Math::sampleBeta(a, b, generator);
+    double newPInvar = Probability::Beta::rv(&rng, a, b);
 
     double a2 = invarAlpha + 1.0;
     double b2 = (invarAlpha / newPInvar) - a2 + 2.0;
 
-    double forward = Math::betaLogPDF(newPInvar, a, b);
-    double backward = Math::betaLogPDF(currentPInvar, a2, b2);
+    double forward = Probability::Beta::lnPdf(a, b, newPInvar);
+    double backward = Probability::Beta::lnPdf(a2, b2, currentPInvar);
 
     currentPInvar = newPInvar;
 
@@ -794,10 +788,9 @@ double Particle::invarMove(){
 }
 
 double Particle::shapeMove(){
-    auto generator = std::mt19937(std::random_device{}());
-    auto unifDist = std::uniform_real_distribution(0.0, 1.0);
+    auto& rng = RandomVariable::randomVariableInstance();
 
-    double scale = std::exp(shapeDelta * (unifDist(generator) - 0.5));
+    double scale = std::exp(shapeDelta * (rng.uniformRv() - 0.5));
     double currentV = currentShape;
     double newV = currentV * scale;
     currentShape = newV;
@@ -805,14 +798,13 @@ double Particle::shapeMove(){
     updateRate = true;
     proposedRate++;
     currentPhylogeny.updateAll();
-    currentRates = Math::getGammaDiscretization(numRates, currentShape);
+    Probability::Gamma::discretization(currentRates, 3.0, 2.0, numRates, true);
 
     return std::log(scale);
 }
 
 double Particle::gibbsPartitionMove(double tempering){
-    auto generator = std::mt19937(std::random_device{}());
-    auto unifDist = std::uniform_real_distribution(0.0, 1.0);
+    auto& rng = RandomVariable::randomVariableInstance();
 
     auto postOrder = currentPhylogeny.getPostOrder();
 
@@ -834,7 +826,7 @@ double Particle::gibbsPartitionMove(double tempering){
         #if TIME_PROFILE==1
         std::chrono::steady_clock::time_point preIter = std::chrono::steady_clock::now();
         #endif
-        int randomSite = (int)(unifDist(generator) * numChar);
+        int randomSite = (int)(rng.uniformRv() * numChar);
         int originalCategory = -1;
         for (int i = 0; i < currentTransitionProbabilityClasses.size(); i++) {
             if (currentTransitionProbabilityClasses[i].members.count(randomSite)) {
@@ -974,7 +966,7 @@ double Particle::gibbsPartitionMove(double tempering){
             total += d;
         }
 
-        double categoryDraw = total * unifDist(generator);
+        double categoryDraw = total * rng.uniformRv();
 
         total = 0.0;
         for(int i = 0; i < likelihoodVec.size(); i++){
