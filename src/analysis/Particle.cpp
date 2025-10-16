@@ -809,11 +809,11 @@ double Particle::gibbsPartitionMove(double tempering){
     auto postOrder = currentPhylogeny.getPostOrder();
 
     int numAux = 5;
-    int numIter = numChar;
+    int numIter = (int)(numChar/2.0);
 
     double alphaSplit = std::log(dppAlpha/numAux);
 
-    int bufferSize = (4 * numAux + currentTransitionProbabilityClasses.size());
+    int bufferSize = (2 * numAux + currentTransitionProbabilityClasses.size());
     auto tempCLBuffer = new Eigen::Vector<double, 20>[numNodes * numRates * bufferSize];
     auto tempRescaleBuffer = new double[numNodes * numRates * bufferSize];
     for(int i = 0; i < numNodes * numRates * bufferSize; i++){
@@ -968,21 +968,26 @@ double Particle::gibbsPartitionMove(double tempering){
 
         double categoryDraw = total * rng.uniformRv();
 
+        auto start = currentTransitionProbabilityClasses.begin() + (catSize - numAux);
+
         total = 0.0;
         for(int i = 0; i < likelihoodVec.size(); i++){
             total += likelihoodVec[i];
             if(total > categoryDraw){
                 if(i < catSize - numAux) { //It already exists
-                    for(int j = 0; j < numAux; j++)
-                        currentTransitionProbabilityClasses.pop_back();
+                    currentTransitionProbabilityClasses.erase(start, currentTransitionProbabilityClasses.end());
                     currentTransitionProbabilityClasses[i].members.insert(randomSite);
                 }
                 else {
                     // Delete the num aux other than the one we want.
-                    for (int c = catSize - 1; c >= catSize - numAux; --c) {
-                        if (c != i) {
-                            currentTransitionProbabilityClasses.erase(currentTransitionProbabilityClasses.begin() + c);
-                        }
+                    auto skip  = currentTransitionProbabilityClasses.begin() + i;
+                    if(skip >= start){
+                        currentTransitionProbabilityClasses.erase(start, skip);
+                        skip = currentTransitionProbabilityClasses.begin() + (catSize - numAux); // New position of the skipped element
+                        currentTransitionProbabilityClasses.erase(skip + 1, currentTransitionProbabilityClasses.end());
+                    }
+                    else{
+                        currentTransitionProbabilityClasses.erase(start, currentTransitionProbabilityClasses.end());
                     }
                     currentTransitionProbabilityClasses[currentTransitionProbabilityClasses.size()-1].members.insert(randomSite);
                 }

@@ -79,13 +79,13 @@ void computeNextStep(std::vector<double>& rawWeights, std::vector<double>& rawLo
     ESS = 1.0 / sumSq;
 }
 
-int main() {
+int main(int argc, char** argv) {
     int numParticles = 500;
     int rejuvinationIterations = 10;
     int numThreads = omp_get_max_threads();
     omp_set_num_threads(numThreads);
     bool invar = false;
-    int numRates = 6;
+    int numRates = 3;
 
     auto& rng = RandomVariable::randomVariableInstance();
     
@@ -191,10 +191,9 @@ int main() {
 
                 mcmc.run(p, rejuvinationIterations, splitPosteriorProbabilities, invar, currentTemp);
 
-                if(rng.uniformRv() < 0.05){
-                    //p.gibbsPartitionMove(currentTemp);
-                    //p.refreshLikelihood();
-                    //p.accept();
+                if(rng.uniformRv() < 0.1){
+                    p.gibbsPartitionMove(currentTemp);
+                    p.refreshLikelihood(true);
                 }
                 rawLogLikelihoods[n] = p.lnLikelihood();
                 rawWeights[n] = -1.0 * std::log(numParticles);
@@ -246,7 +245,6 @@ int main() {
     }
 
     particles[0].copyFromSerialized(currentSerializedParticles[maxID]);
-
     std::cout << particles[0].getNewick(splitPosteriorProbabilities) << std::endl;
 
     std::chrono::steady_clock::time_point postAnalysis = std::chrono::steady_clock::now();
