@@ -24,7 +24,6 @@ class Particle {
         void initialize(bool initInvar=false);
 
         void refreshLikelihood(bool forceUpdate = false); // Refreshes the likelihood and stores it in the currentLnLikelihood variable
-        void forceLikelihoodUpdate() { refreshLikelihood(true); };
 
         double lnPrior();
         double lnLikelihood();

@@ -1,7 +1,6 @@
 #include <iostream>
 #include <iomanip>
 #include <random>
-#include <format>
 #include <chrono>
 #include <omp.h>
 #include <unordered_map>
@@ -105,10 +104,10 @@ int main() {
     currentSerializedParticles.reserve(numParticles);
     oldSerializedParticles.reserve(numParticles);
 
-    Alignment aln("/workspaces/FastCAT/local_testing/phylo_hits.align.trim_auto.fasta");
+    Alignment aln("/workspaces/FastCAT/local_testing/globin_aa_aligned.fasta");
     int numChar = aln.getNumChar();
 
-    std::cout << std::format("Utilizing {} threads for working with {}", numThreads, numParticles) << std::endl;
+    std::cout << "Utilizing " << numThreads << " threads for working with " << numParticles << std::endl;
 
     Mcmc mcmc{};
     std::vector<Particle> particles;
@@ -157,7 +156,7 @@ int main() {
             }
         }
 
-        std::cout << std::format("{}\tTemp: {:.5f}\t ESS: {:.5f}", i, currentTemp, ESS) << std::endl;
+        std::cout << i << "\tTemp: " << currentTemp << "\tESS: " << ESS << std::endl;
 
         if(ESS <= 0.6 * numParticles && currentTemp != 1.0){
             std::cout << "Resampling Particles..." << std::endl;
@@ -182,7 +181,7 @@ int main() {
                 }
             }
 
-            std::cout << "Rejuvinating Particles..." << std::endl;
+            std::cout << "Rejuvenating Particles..." << std::endl;
             #pragma omp parallel for schedule(dynamic)
             for (int n = 0; n < numParticles; n++) {
                 int threadID = omp_get_thread_num();

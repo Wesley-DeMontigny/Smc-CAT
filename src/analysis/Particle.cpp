@@ -129,16 +129,7 @@ void Particle::initialize(bool initInvar){
         }
     }
 
-    for(auto& c : currentTransitionProbabilityClasses){
-        c.recomputeEigens();
-        for(auto n : currentPhylogeny.getPostOrder()){
-            for(int r = 0; r < numRates; r++){
-                c.recomputeTransitionProbs(n->id, n->branchLength, r, currentRates[r]);
-            }
-    }
-    }
-
-    forceLikelihoodUpdate();
+    refreshLikelihood(true);
 
     oldPhylogeny = currentPhylogeny;
 
@@ -174,7 +165,7 @@ void Particle::copy(Particle& p){
     currentShape = p.currentShape;
     oldShape = currentShape;
 
-    forceLikelihoodUpdate();
+    refreshLikelihood(true);
 
     oldPhylogeny = currentPhylogeny;
 
@@ -224,13 +215,6 @@ void Particle::copyFromSerialized(SerializedParticle& sp){
                     cls.members.insert(m);
                 }
             }
-
-            cls.recomputeEigens();
-            for(auto n : nodes){
-                for(int r = 0; r < numRates; r++){
-                    cls.recomputeTransitionProbs(n->id, n->branchLength, r, currentRates[r]);
-                }
-            }
         }
         else{
             TransitionProbabilityClass cls(numNodes, numRates, baseMatrix.get());
@@ -244,13 +228,6 @@ void Particle::copyFromSerialized(SerializedParticle& sp){
                 }
             }
 
-            cls.recomputeEigens();
-            for(auto n : nodes){
-                for(int r = 0; r < numRates; r++){
-                    cls.recomputeTransitionProbs(n->id, n->branchLength, r, currentRates[r]);
-                }
-            }
-
             currentTransitionProbabilityClasses.push_back(cls);
         }
     }
@@ -260,7 +237,7 @@ void Particle::copyFromSerialized(SerializedParticle& sp){
     std::cout << "The transition prob copy completed in " << std::chrono::duration_cast<std::chrono::milliseconds>(postTransProb - preTransProb).count() << "[milliseconds]" << std::endl;
     #endif
 
-    forceLikelihoodUpdate();
+    refreshLikelihood(true);
 
     std::copy(rescaleBuffer.get(),
         rescaleBuffer.get() + numChar * numNodes * numRates,
@@ -433,17 +410,10 @@ void Particle::read(int id, std::string& dir){
             }
         }
 
-        cls.recomputeEigens();
-        for(auto n : currentPhylogeny.getPostOrder()){
-            for(int r = 0; r < numRates; r++){
-                cls.recomputeTransitionProbs(n->id, n->branchLength, r, currentRates[r]);
-            }
-        }
-
         currentTransitionProbabilityClasses.push_back(cls);
     }
     
-    forceLikelihoodUpdate();
+    refreshLikelihood(true);
 
     oldPhylogeny = currentPhylogeny;
 
@@ -588,10 +558,9 @@ void Particle::refreshLikelihood(bool forceUpdate){
     std::chrono::steady_clock::time_point preTPUpdate = std::chrono::steady_clock::now();
     #endif
 
-    // All moves should be mutually exclusive each turn.
-    if(updateStationary){ // Update all TPs of that class if that was the last move
+    if(updateStationary || forceUpdate){ // Update all TPs of that class if that was the last move
         for(auto& c : currentTransitionProbabilityClasses){
-            if(c.updated){
+            if(c.updated || forceUpdate){
                 c.recomputeEigens();
                 for(auto n : postOrder){
                     n->updateTP = false;
