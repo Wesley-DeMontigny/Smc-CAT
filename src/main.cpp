@@ -148,10 +148,10 @@ int main(int argc, char** argv) {
         for(int n = 0; n < numParticles; n++){
             for(std::string split : particleSplits[n]){
                 if (splitPosteriorProbabilities.count(split)) {
-                    splitPosteriorProbabilities[split] += normalizedWeights[i];
+                    splitPosteriorProbabilities[split] += normalizedWeights[n];
                 }
                 else {
-                    splitPosteriorProbabilities[split] = normalizedWeights[i];
+                    splitPosteriorProbabilities[split] = normalizedWeights[n];
                 }
             }
         }
