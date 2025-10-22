@@ -22,7 +22,6 @@ target_link_libraries(fastcat_lib PUBLIC Eigen3::Eigen HDF5::HDF5 OpenMP::OpenMP
 add_executable(main src/main.cpp)
 target_link_libraries(main PRIVATE fastcat_lib OpenMP::OpenMP_CXX)
 
-
 target_compile_options(fastcat_lib PRIVATE -march=native -O3)
 target_compile_options(main PRIVATE -march=native -O3)
 
@@ -31,5 +30,6 @@ target_compile_options(main PRIVATE -march=native -O3)
 #target_compile_options(main PRIVATE -fsanitize=address -fno-omit-frame-pointer -g)
 #target_link_options(main PRIVATE -fsanitize=address)
 
+add_compile_definitions(MIXED_PRECISION=1)
 #add_compile_definitions(TEST_RUN=1)
 #add_compile_definitions(TIME_PROFILE=1)

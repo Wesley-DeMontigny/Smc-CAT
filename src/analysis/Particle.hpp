@@ -2,6 +2,7 @@
 #define PARTICLE_HPP
 #include <eigen3/Eigen/Dense>
 #include <memory>
+#include "core/Types.hpp"
 #include "TransitionProbabilityClass.hpp"
 #include "Tree.hpp"
 
@@ -15,46 +16,39 @@ class Particle {
     public:
         Particle(void)=delete;
         Particle(Alignment& aln, int nR=1, bool initInvar=false);
-        void copy(Particle& p);
-        void copyFromSerialized(SerializedParticle& sp);
-        void writeToSerialized(SerializedParticle& sp);
-        void write(int id, std::string& dir);
-        void read(int id, std::string& dir);
-
-        void initialize(bool initInvar=false);
-
-        void refreshLikelihood(bool forceUpdate = false); // Refreshes the likelihood and stores it in the currentLnLikelihood variable
-
-        double lnPrior();
-        double lnLikelihood();
-
-        void accept();
-        void reject();
         
-        double topologyMove(const std::unordered_map<std::string, double>& splitPosterior);
         double branchMove();
-        double stationaryMove();
-        double invarMove();
-        double shapeMove();
+        double getPInvar() { return currentPInvar; }
+        double getShape() { return currentShape; }
         double gibbsPartitionMove(double tempering); // Returns infinity in case it is in an MH setting
-
-        void tune(); // Tune the proposal parameters
-
-        std::string getNewick() { return currentPhylogeny.generateNewick(); }
-        std::string getNewick(std::unordered_map<std::string, double>& splitPosteriorProbabilities) { return currentPhylogeny.generateNewick(splitPosteriorProbabilities); }
+        double invarMove();
+        double lnLikelihood();
+        double lnPrior();
+        double shapeMove();
+        double stationaryMove();
+        double topologyMove(const std::unordered_map<std::string, double>& splitPosterior);
+        Eigen::Matrix<double, 20, 20> getBaseMatrix() { return *baseMatrix; }
         int getNumCategories() { return currentTransitionProbabilityClasses.size(); }
         int getNumNodes() { return numNodes; }
         int getNumRates() { return numRates; }
-        double getShape() { return currentShape; }
-        double getPInvar() { return currentPInvar; }
-        Eigen::Matrix<double, 20, 20> getBaseMatrix() { return *baseMatrix; }
-        std::vector<int> getAssignments();
-        std::vector<Eigen::Vector<double, 20>> getCategories();
-        std::vector<double> getRates() { return currentRates; }
         std::set<std::string> getSplits() { return currentPhylogeny.getSplits(); }
-
-        void setInvariance(double i) { currentPInvar = i; }
+        std::string getNewick() { return currentPhylogeny.generateNewick(); }
+        std::string getNewick(std::unordered_map<std::string, double>& splitPosteriorProbabilities) { return currentPhylogeny.generateNewick(splitPosteriorProbabilities); }
+        std::vector<double> getRates() { return currentRates; }
+        std::vector<Eigen::Vector<double, 20>> getCategories();
+        std::vector<int> getAssignments();
+        void accept();
+        void copy(Particle& p);
+        void copyFromSerialized(SerializedParticle& sp);
+        void initialize(bool initInvar=false);
+        void read(int id, std::string& dir);
+        void refreshLikelihood(bool forceUpdate = false); // Refreshes the likelihood and stores it in the currentLnLikelihood variable
+        void reject();
         void setAssignments(std::vector<int>& assignments);
+        void setInvariance(double i) { currentPInvar = i; }
+        void tune(); // Tune the proposal parameters
+        void write(int id, std::string& dir);
+        void writeToSerialized(SerializedParticle& sp);
 
         // Variables to keep track of acceptance rates so we can track performance
         int proposedStationary = 0;
@@ -102,7 +96,7 @@ class Particle {
         std::unique_ptr<uint8_t[]> currentConditionalLikelihoodFlags; // To stop us from having to swap the whole memory space, we just keep a working space flag for each node
         std::unique_ptr<uint8_t[]> oldConditionalLikelihoodFlags; // Swap back flags if rejected
 
-        std::unique_ptr<Eigen::Vector<double, 20>[]> conditionaLikelihoodBuffer; // Contains all the conditional likelihoods for each node (rescaled). Should be size NumSites x NumNodes x 2
+        std::unique_ptr<Eigen::Vector<CL_TYPE, 20>[]> conditionaLikelihoodBuffer; // Contains all the conditional likelihoods for each node (rescaled). Should be size NumSites x NumNodes x 2
         std::unique_ptr<double[]> rescaleBuffer; // Contains all the rescale values we computed. Should be size NumNodes x NumSites x 2.
         
         std::unique_ptr<double[]> isInvariant;

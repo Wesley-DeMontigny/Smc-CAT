@@ -34,11 +34,11 @@ Particle::Particle(Alignment& aln, int nR, bool initInvar) :
 
     currentConditionalLikelihoodFlags = std::unique_ptr<uint8_t[]>(new uint8_t[numNodes]);
     oldConditionalLikelihoodFlags = std::unique_ptr<uint8_t[]>(new uint8_t[numNodes]);
-    conditionaLikelihoodBuffer = std::unique_ptr<Eigen::Vector<double, 20>[]>(new Eigen::Vector<double, 20>[numChar * numNodes * numRates * 2]);
+    conditionaLikelihoodBuffer = std::unique_ptr<Eigen::Vector<CL_TYPE, 20>[]>(new Eigen::Vector<CL_TYPE, 20>[numChar * numNodes * numRates * 2]);
     rescaleBuffer = std::unique_ptr<double[]>(new double[numChar * numNodes * numRates * 2]);
     for(int i = 0; i < numChar * numNodes * numRates * 2; i++){
         rescaleBuffer[i] = 0.0;
-        conditionaLikelihoodBuffer[i] = Eigen::Vector<double, 20>::Zero();
+        conditionaLikelihoodBuffer[i] = Eigen::Vector<CL_TYPE, 20>::Zero();
     }
 
     // Load the data into our vectors
@@ -601,7 +601,7 @@ void Particle::refreshLikelihood(bool forceUpdate){
 
     int nodeSpacer = numChar * numRates; // The length that spans a single node of the condL buffer
     int fullSpacer = numNodes * nodeSpacer; // The length that spans the whole condL buffer
-    Eigen::Matrix<double,20,1> workBuffer;
+    Eigen::Matrix<CL_TYPE, 20, 1> workBuffer;
 
     for(auto n : postOrder){
         int nIndex = n->id;
@@ -626,7 +626,7 @@ void Particle::refreshLikelihood(bool forceUpdate){
                 */
                 for(auto& tClass : currentTransitionProbabilityClasses){
                     for(int r = 0; r < numRates; r++){
-                        Eigen::Matrix<double, 20, 20>& P = tClass.transitionProbabilities[pOffset + r];
+                        Eigen::Matrix<CL_TYPE, 20, 20>& P = tClass.transitionProbabilities[pOffset + r];
                         for(int c : tClass.members){
                             auto& pDRef = pD[c * numRates + r];
                             auto& pNRef = pN[c * numRates + r];
@@ -640,7 +640,7 @@ void Particle::refreshLikelihood(bool forceUpdate){
             std::fill(rescalePointer, rescalePointer + nodeSpacer, 0.0);
 
             for(int c = 0; c < nodeSpacer; c++){
-                double max = pN->maxCoeff();
+                double max = (double)(pN->maxCoeff()); // We just show the cast here in case we are using single precision
                 *pN /= max;
                 *rescalePointer = std::log(max);
 
@@ -670,7 +670,11 @@ void Particle::refreshLikelihood(bool forceUpdate){
     double invInvarScaler = 1.0 - currentPInvar;
 
     for(auto& tClass : currentTransitionProbabilityClasses){
+        #if MIXED_PRECISION
+        auto stationaryVec = (tClass.stationaryDistribution).array().cast<CL_TYPE>(); // We cast here so we don't need to cast in the hot loop. We lose some precision but that is okay
+        #else
         auto stationaryVec = (tClass.stationaryDistribution).array();
+        #endif
         for(int c : tClass.members){
             // We need to use log-sum-exp to handle multiple rates
             double maxLogLike = -1.0 * INFINITY;
@@ -814,11 +818,11 @@ double Particle::gibbsPartitionMove(double tempering){
     double alphaSplit = std::log(dppAlpha/numAux);
 
     int bufferSize = (2 * numAux + currentTransitionProbabilityClasses.size());
-    auto tempCLBuffer = new Eigen::Vector<double, 20>[numNodes * numRates * bufferSize];
+    auto tempCLBuffer = new Eigen::Vector<CL_TYPE, 20>[numNodes * numRates * bufferSize];
     auto tempRescaleBuffer = new double[numNodes * numRates * bufferSize];
     for(int i = 0; i < numNodes * numRates * bufferSize; i++){
         tempRescaleBuffer[i] = 0.0;
-        tempCLBuffer[i] = Eigen::Vector<double, 20>::Zero();
+        tempCLBuffer[i] = Eigen::Vector<CL_TYPE, 20>::Zero();
     }
 
     // Choosing to update randomly seems like it is the best strategy?
@@ -855,7 +859,7 @@ double Particle::gibbsPartitionMove(double tempering){
 
         int catSize = currentTransitionProbabilityClasses.size();
 
-        Eigen::Matrix<double,20,1> workBuffer;
+        Eigen::Matrix<CL_TYPE,20,1> workBuffer;
 
         // We try to give ourselves a big enough buffer at the beginning, but if it gets too small, update it.
         if(bufferSize < catSize){
@@ -863,11 +867,11 @@ double Particle::gibbsPartitionMove(double tempering){
             delete [] tempRescaleBuffer;
 
             bufferSize = (2 * numAux + catSize);
-            tempCLBuffer = new Eigen::Vector<double, 20>[numNodes * numRates * bufferSize];
+            tempCLBuffer = new Eigen::Vector<CL_TYPE, 20>[numNodes * numRates * bufferSize];
             tempRescaleBuffer = new double[numNodes * numRates * bufferSize];
             for(int i = 0; i < numNodes * numRates * bufferSize; i++){
                 tempRescaleBuffer[i] = 0.0;
-                tempCLBuffer[i] = Eigen::Vector<double, 20>::Zero();
+                tempCLBuffer[i] = Eigen::Vector<CL_TYPE, 20>::Zero();
             }
         }
 
@@ -891,7 +895,7 @@ double Particle::gibbsPartitionMove(double tempering){
                     
                     for(int c = 0; c < catSize; c++){
                         for(int r = 0; r < numRates; r++){
-                            Eigen::Matrix<double, 20, 20>& P = currentTransitionProbabilityClasses[c].transitionProbabilities[pOffset + r];
+                            Eigen::Matrix<CL_TYPE, 20, 20>& P = currentTransitionProbabilityClasses[c].transitionProbabilities[pOffset + r];
                             auto& pDRef = pD[c * numRates + r];
                             auto& pNRef = pN[c * numRates + r];
                             workBuffer.noalias() = P * pDRef;
@@ -903,7 +907,7 @@ double Particle::gibbsPartitionMove(double tempering){
                 std::fill(rescalePointer, rescalePointer + activeNodeSpacer, 0.0);
 
                 for(int c = 0; c < activeNodeSpacer; c++){
-                    double max = pN->maxCoeff();
+                    double max = (double)(pN->maxCoeff());
                     *pN /= max;
                     *rescalePointer = std::log(max);
 
@@ -929,7 +933,11 @@ double Particle::gibbsPartitionMove(double tempering){
         double invInvarScaler = 1.0 - currentPInvar;
 
         for(int c = 0; c < catSize; c++){
+            #if MIXED_PRECISION
+            auto stationaryVec = (currentTransitionProbabilityClasses[c].stationaryDistribution).array().cast<CL_TYPE>();
+            #else
             auto stationaryVec = (currentTransitionProbabilityClasses[c].stationaryDistribution).array();
+            #endif
 
             double maxLogLike = -std::numeric_limits<double>::infinity();
 

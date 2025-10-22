@@ -9,7 +9,7 @@ TransitionProbabilityClass::TransitionProbabilityClass(int n, int c, Eigen::Matr
     transitionProbabilities.reserve(n * numRates);
     for(int i = 0; i < n * numRates; i++){
         transitionProbabilities.push_back(
-            Eigen::Matrix<double, 20, 20>::Zero() 
+            Eigen::Matrix<CL_TYPE, 20, 20>::Zero() 
         );
     }
 
@@ -78,7 +78,11 @@ void TransitionProbabilityClass::recomputeTransitionProbs(int n, double t, int c
     workingMatrix1.noalias() = eigenVectors * workingDiag;
     workingMatrix2.noalias() = workingMatrix1 * inverseEigenVectors;
 
+    #if MIXED_PRECISION
+    transitionProbabilities[n*numRates + c] = workingMatrix2.real().cast<CL_TYPE>();
+    #else
     transitionProbabilities[n*numRates + c] = workingMatrix2.real();
+    #endif
 }
 
 double TransitionProbabilityClass::dirichletSimplexMove(double alpha){

@@ -4,11 +4,12 @@
 #include <memory>
 #include <random>
 #include <set>
+#include "core/Types.hpp"
 
 struct TransitionProbabilityClass {
     TransitionProbabilityClass(int n, int c, Eigen::Matrix<double, 20, 20>* bM);
 
-    std::vector<Eigen::Matrix<double, 20, 20>> transitionProbabilities; // Indexed by node
+    std::vector<Eigen::Matrix<CL_TYPE, 20, 20>> transitionProbabilities; // Indexed by node
     
     Eigen::Matrix<double, 20, 20>* baseMatrix;
     Eigen::Vector<double, 20> stationaryDistribution;
