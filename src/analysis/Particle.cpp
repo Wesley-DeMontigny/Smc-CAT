@@ -20,7 +20,7 @@
 
 Particle::Particle(int seed, Alignment& aln, int nR, bool initInvar) : 
                        rng(seed), numChar(aln.getNumChar()), currentPhylogeny(rng, aln.getTaxaNames()), aln(aln), numRates(nR),
-                       oldPhylogeny(currentPhylogeny), numNodes(currentPhylogeny.getNumNodes()), numTaxa(aln.getNumTaxa()) {
+                       oldPhylogeny(currentPhylogeny), numNodes(aln.getNumTaxa() * 2 - 1), numTaxa(aln.getNumTaxa()) {
 
     // We can make this configurable later
     baseMatrix = std::unique_ptr<Eigen::Matrix<double, 20, 20>>(new Eigen::Matrix<double, 20, 20>(RateMatrices::ConstructLG()));
@@ -188,7 +188,7 @@ void Particle::copyFromSerialized(SerializedParticle& sp){
     if(numRates > 1)
         discretizeGamma(currentRates, currentShape, numRates);
 
-    std::vector<TreeNode*>& nodes = currentPhylogeny.getPostOrder();
+    const std::vector<TreeNode*>& nodes = currentPhylogeny.getPostOrder();
 
     #if TIME_PROFILE == 1
     std::chrono::steady_clock::time_point preTransProb = std::chrono::steady_clock::now();
@@ -402,7 +402,7 @@ void Particle::setAssignments(std::vector<int>& assignments) {
 }
 
 void Particle::refreshLikelihood(bool forceUpdate){
-    auto postOrder = currentPhylogeny.getPostOrder();
+    const auto postOrder = currentPhylogeny.getPostOrder();
 
     #if TIME_PROFILE==1
     std::chrono::steady_clock::time_point preTPUpdate = std::chrono::steady_clock::now();
@@ -554,7 +554,7 @@ void Particle::refreshLikelihood(bool forceUpdate){
     currentLnLikelihood = lnL;
 }
 
-double Particle::topologyMove(const std::unordered_map<std::string, double>& splitPosterior){
+double Particle::topologyMove(const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosterior){
     double hastings = 0.0;
 
     if(boost::random::uniform_01<double>{}(rng) < 0.5){
@@ -649,7 +649,7 @@ double Particle::shapeMove(){
 double Particle::gibbsPartitionMove(double tempering){
     boost::random::uniform_01<double> unif{};
 
-    auto postOrder = currentPhylogeny.getPostOrder();
+    const auto postOrder = currentPhylogeny.getPostOrder();
 
     int numAux = 5;
     int numIter = (int)(numChar/2.0);

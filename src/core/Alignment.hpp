@@ -11,9 +11,9 @@ class Alignment {
     public:
         Alignment(void) = delete;
         Alignment(std::string path);
-        int operator()(int t, int s) {return dataMatrix[t*numChar + s];}
-        int getNumChar() {return numChar;}
-        int getNumTaxa() {return numTaxa;}
+        int operator()(int t, int s) const {return dataMatrix[t*numChar + s];}
+        int getNumChar() const {return numChar;}
+        int getNumTaxa() const {return numTaxa;}
         std::vector<std::string> getTaxaNames() {return taxaNames;}
     private:
         int numChar;

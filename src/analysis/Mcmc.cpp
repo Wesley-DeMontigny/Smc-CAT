@@ -7,7 +7,7 @@
 
 Mcmc::Mcmc(void) {}
 
-double Mcmc::run(Particle& model, int iterations, const std::unordered_map<std::string, double>& splitPosterior, bool updateInvar, double tempering){
+double Mcmc::run(Particle& model, int iterations, const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosterior, bool updateInvar, double tempering){
     boost::random::mt19937& rng = model.getRng();
     boost::random::uniform_01<double> unif{};
 

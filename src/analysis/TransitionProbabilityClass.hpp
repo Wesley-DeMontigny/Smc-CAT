@@ -6,6 +6,10 @@
 #include <memory>
 #include <set>
 
+/**
+ * @brief 
+ * 
+ */
 struct TransitionProbabilityClass {
     TransitionProbabilityClass(void)=delete;
     TransitionProbabilityClass(boost::random::mt19937& rng, int n, int c, Eigen::Matrix<double, 20, 20>* bM);

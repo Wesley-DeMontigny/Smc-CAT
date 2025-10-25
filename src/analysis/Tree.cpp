@@ -188,7 +188,7 @@ TreeNode* Tree::addNode() {
     return rawPtr;
 }
 
-int Tree::getTaxonIndex(std::string token, std::vector<std::string> taxaNames){
+int Tree::getTaxonIndex(std::string token, const std::vector<std::string>& taxaNames) const{
 
     for(int i = 0, n = taxaNames.size(); i < n; i++){
         if(taxaNames[i] == token)
@@ -198,7 +198,7 @@ int Tree::getTaxonIndex(std::string token, std::vector<std::string> taxaNames){
     return -1;
 }
 
-std::vector<std::string> Tree::parseNewickString(std::string newick){
+std::vector<std::string> Tree::parseNewickString(std::string newick) const {
     std::vector<std::string> tokens;
     std::string str = "";
     for(int i = 0; i < newick.length(); i++){
@@ -305,7 +305,7 @@ void Tree::clone(const Tree& t){
 
 Tree::~Tree() {}
 
-std::string Tree::generateNewick(){
+std::string Tree::generateNewick() const {
     std::string output = "";
 
     output = recursiveNewickGenerate(output, root);
@@ -315,8 +315,8 @@ std::string Tree::generateNewick(){
     return output;
 }
 
-std::string Tree::generateNewick(std::unordered_map<std::string, double>& splitPosteriorProbabilities){
-    std::vector<std::string> splits = getInternalSplitVec();
+std::string Tree::generateNewick(const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosteriorProbabilities) const{
+    std::vector<boost::dynamic_bitset<>> splits = getInternalSplitVec();
 
     std::string output = "";
 
@@ -327,7 +327,7 @@ std::string Tree::generateNewick(std::unordered_map<std::string, double>& splitP
     return output;
 }
 
-std::string Tree::recursiveNewickGenerate(std::string s, TreeNode* p){
+std::string Tree::recursiveNewickGenerate(std::string s, TreeNode* p) const{
     if(! p->isTip){
         s += "(";
         for(auto child : p->descendants) {
@@ -348,7 +348,7 @@ std::string Tree::recursiveNewickGenerate(std::string s, TreeNode* p){
     return s;
 }
 
-std::string Tree::recursiveNewickGenerate(std::string s, TreeNode* p, std::unordered_map<std::string, double>& splitPosteriorProbabilities, std::vector<std::string>& splitVec){
+std::string Tree::recursiveNewickGenerate(std::string s, TreeNode* p, const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosteriorProbabilities, const std::vector<boost::dynamic_bitset<>>& splitVec) const{
     if(! p->isTip){
         s += "(";
         for(auto child : p->descendants) {
@@ -359,7 +359,7 @@ std::string Tree::recursiveNewickGenerate(std::string s, TreeNode* p, std::unord
         s += ")";
 
         if(p != root){
-            s += std::to_string(splitPosteriorProbabilities[splitVec[p->id - tips.size() - 1]]);
+            s += std::to_string(splitPosteriorProbabilities.at(splitVec.at(p->id - tips.size() - 1)));
             s += ":" + std::to_string(p->branchLength);
         }
     }
@@ -393,86 +393,75 @@ void Tree::updateAll(){
     }
 }
 
-std::string complementBinary(std::string s){
-    std::string r = "";
-    for(char c : s){
-        if(c == '0')
-            r += '1';
-        else
-            r += '0';
-    }
-    return r;
-}
-
-std::set<std::string> Tree::getSplits(){
-    std::set<std::string> splits;
-    std::unordered_map<TreeNode*, std::string> splitString;
-    std::string zeroString = "";
-    for(int i = 0; i < tips.size(); i++)
-        zeroString += "0";
+std::set<boost::dynamic_bitset<>> Tree::getSplits() const{
+    std::set<boost::dynamic_bitset<>> splits;
+    std::unordered_map<TreeNode*, boost::dynamic_bitset<>> splitMap;
+    boost::dynamic_bitset<> zeroSet = boost::dynamic_bitset<>{tips.size()};
 
     for(int i = 0; i < tips.size(); i++){
-        std::string tipString(zeroString);
-        tipString[i] = '1';
-        splitString[nodes[i].get()] = tipString;
+        boost::dynamic_bitset<> tipSet(zeroSet);
+        tipSet.flip(i);
+        splitMap[nodes[i].get()] = tipSet;
     }
 
     for(TreeNode* n : postOrder){
         if(!n->isTip && !n->isRoot){
-            std::string newString(zeroString);
+            boost::dynamic_bitset<> newSet(zeroSet);
             for(TreeNode* d : n->descendants){
-                std::string descString = splitString[d];
+                boost::dynamic_bitset<> descSet = splitMap[d];
                 for(int i = 0; i < tips.size(); i++){
-                    if(descString[i] == '1'){
-                        newString[i] = '1';
+                    if(descSet[i] == 1){
+                        newSet.flip(i);
                     }
                 }
             }
-            std::string complementS = complementBinary(newString);
-            if(complementS < newString)
-                splits.insert(complementS);
+
+            boost::dynamic_bitset<> complement(newSet);
+            complement.flip();
+            if(complement < newSet)
+                splits.insert(complement);
             else
-                splits.insert(newString);
+                splits.insert(newSet);
             
-            splitString[n] = newString;
+            splitMap[n] = newSet;
         }
     }
 
     return splits;
 }
 
-std::vector<std::string> Tree::getInternalSplitVec(){
-    // We are only able to explicitly skip the root this way because of how we assigned IDs above
-    std::vector<std::string> splits(nodes.size() - tips.size() - 1, "");
-    std::unordered_map<TreeNode*, std::string> splitString;
-    std::string zeroString = "";
-    for(int i = 0; i < tips.size(); i++)
-        zeroString += "0";
+std::vector<boost::dynamic_bitset<>> Tree::getInternalSplitVec() const {
+    std::vector<boost::dynamic_bitset<>> splits(nodes.size() - tips.size() - 1, boost::dynamic_bitset{tips.size()});
+    std::unordered_map<TreeNode*, boost::dynamic_bitset<>> splitMap;
+    boost::dynamic_bitset<> zeroSet = boost::dynamic_bitset<>{tips.size()};
 
     for(int i = 0; i < tips.size(); i++){
-        std::string tipString(zeroString);
-        tipString[i] = '1';
-        splitString[nodes[i].get()] = tipString;
+        boost::dynamic_bitset<> tipSet(zeroSet);
+        tipSet.flip(i);
+        splitMap[nodes[i].get()] = tipSet;
     }
 
     for(TreeNode* n : postOrder){
         if(!n->isTip && !n->isRoot){
-            std::string newString(zeroString);
+            boost::dynamic_bitset<> newSet(zeroSet);
             for(TreeNode* d : n->descendants){
-                std::string descString = splitString[d];
+                boost::dynamic_bitset<> descSet = splitMap[d];
                 for(int i = 0; i < tips.size(); i++){
-                    if(descString[i] == '1'){
-                        newString[i] = '1';
+                    if(descSet[i] == 1){
+                        newSet.flip(i);
                     }
                 }
             }
-            std::string complementS = complementBinary(newString);
-            if(complementS < newString)
-                splits[n->id - tips.size() - 1] = complementS;
+
+            boost::dynamic_bitset complement(newSet);
+            complement.flip();
+
+            if(complement < newSet)
+                splits[n->id - tips.size() - 1] = complement;
             else
-                splits[n->id - tips.size() - 1] = newString;
+                splits[n->id - tips.size() - 1] = newSet;
             
-            splitString[n] = newString;
+            splitMap[n] = newSet;
         }
     }
 
@@ -599,11 +588,11 @@ double Tree::NNIMove(boost::random::mt19937& rng){
 }
 
 // Biased interior node selection using the posterior probability of the split that node creates. Inspired by X Meyer 2021
-double Tree::adaptiveNNIMove(boost::random::mt19937& rng, double epsilon, const std::unordered_map<std::string, double>& splitPosterior){
+double Tree::adaptiveNNIMove(boost::random::mt19937& rng, double epsilon, const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosterior){
     boost::random::uniform_01<double> unif{};
 
     
-    std::vector<std::string> currentSplits = getInternalSplitVec();
+    std::vector<boost::dynamic_bitset<>> currentSplits = getInternalSplitVec();
     std::vector<double> nodeProbs(currentSplits.size(), 0.0);
 
     double total = 0.0;

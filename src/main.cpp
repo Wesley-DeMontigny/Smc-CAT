@@ -1,3 +1,4 @@
+#include <boost/dynamic_bitset.hpp>
 #include <boost/random/mersenne_twister.hpp>
 #include <boost/random/uniform_01.hpp>
 #include <iostream>
@@ -92,8 +93,8 @@ int main(int argc, char** argv) {
     std::vector<double> rawLogLikelihoods(numParticles, 0);
     std::vector<double> rawWeights(numParticles, -1.0 * std::log(numParticles));
 
-    std::unordered_map<std::string, double> splitPosteriorProbabilities;
-    std::vector<std::set<std::string>> particleSplits;
+    std::unordered_map<boost::dynamic_bitset<>, double> splitPosteriorProbabilities;
+    std::vector<std::set<boost::dynamic_bitset<>>> particleSplits;
     particleSplits.reserve(numParticles);
     for(int i = 0; i < numParticles; i++){
         particleSplits.push_back({});
@@ -146,7 +147,7 @@ int main(int argc, char** argv) {
         // Generate split posterior probabilities
         splitPosteriorProbabilities.clear();
         for(int n = 0; n < numParticles; n++){
-            for(std::string split : particleSplits[n]){
+            for(boost::dynamic_bitset<> split : particleSplits[n]){
                 if (splitPosteriorProbabilities.count(split)) {
                     splitPosteriorProbabilities[split] += normalizedWeights[n];
                 }
@@ -221,8 +222,8 @@ int main(int argc, char** argv) {
         normalizedWeights[n] /= total;
     }
 
-    std::vector<std::set<std::string>> deduped;
-    std::set<std::set<std::string>> seen;
+    std::vector<std::set<boost::dynamic_bitset<>>> deduped;
+    std::set<std::set<boost::dynamic_bitset<>>> seen;
     for (auto& s : particleSplits)
         seen.insert(s);
     deduped.assign(seen.begin(), seen.end());
@@ -234,7 +235,7 @@ int main(int argc, char** argv) {
     double maxScore = -INFINITY;
     for(int i = 0; i < particles.size(); i++){
         double currentScore = 0.0;
-        for(std::string s : particleSplits[i]){
+        for(const auto& s : particleSplits[i]){
             currentScore += std::log(splitPosteriorProbabilities[s]);
         }
 

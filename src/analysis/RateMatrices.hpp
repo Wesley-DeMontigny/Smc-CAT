@@ -2,7 +2,7 @@
 #include <eigen3/Eigen/Dense>
 
 namespace RateMatrices {
-    static Eigen::Matrix<double, 20, 20> ConstructLG() {
+    static const Eigen::Matrix<double, 20, 20> ConstructLG() {
         Eigen::Matrix<double, 20, 20> m = Eigen::Matrix<double, 20, 20>::Zero();
         
         m( 0, 0) = 0.0000000; m( 0, 1) = 0.4250930; m( 0, 2) = 0.2768180; m( 0, 3) = 0.3951440; m( 0, 4) = 2.4890840;
