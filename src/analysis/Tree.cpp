@@ -1,27 +1,26 @@
 #include "Tree.hpp"
-#include "core/RandomVariable.hpp"
-#include "core/Probability.hpp"
-#include <memory>
-#include <random>
-#include <cassert>
 #include <algorithm>
+#include <boost/random/uniform_01.hpp>
+#include <boost/random/exponential_distribution.hpp>
+#include <cassert>
 #include <iostream>
+#include <memory>
 
 // Construct random tree with n tips and exponentially distributed branch lengths
-Tree::Tree(int n){
+Tree::Tree(boost::random::mt19937& rng, int n){
     assert(n >= 3);
 
-    auto& rng = RandomVariable::randomVariableInstance();
+    boost::random::uniform_01<double> unif{};
 
-    root = addNode();
+    root = addNode(rng);
     root->isRoot = true;
     root->branchLength = 0.0;
-    auto A = addNode();
+    auto A = addNode(rng);
     A->isTip = true;
     A->ancestor = root;
     A->name = "t0";
     A->id = 0;
-    auto B = addNode();
+    auto B = addNode(rng);
     B->isTip = true;
     B->ancestor = root;
     B->name = "t1";
@@ -34,12 +33,12 @@ Tree::Tree(int n){
     tips.push_back(B);
 
     for(int i = 2; i < n; i++){
-        int randomIndex = (int)(rng.uniformRv() * i);
+        int randomIndex = (int)(unif(rng) * i);
         auto randomTip = tips[randomIndex];
 
-        auto newInternal = addNode();
+        auto newInternal = addNode(rng);
         newInternal->ancestor = randomTip->ancestor;
-        auto newTip = addNode();
+        auto newTip = addNode(rng);
         newTip->id = i;
         newTip->isTip = true;
         newTip->name = "t" + std::to_string(i);
@@ -165,11 +164,22 @@ Tree::Tree(std::string newick, std::vector<std::string> taxaNames){
     regeneratePostOrder();
 }
 
-TreeNode* Tree::addNode() {
-    auto& rng = RandomVariable::randomVariableInstance();
+TreeNode* Tree::addNode(boost::random::mt19937& rng) {
 
     auto newNode = std::make_unique<TreeNode>(
-        TreeNode{0, "", false, false, Probability::Exponential::rv(&rng, 10.0), nullptr, {}, false, false}
+        TreeNode{0, "", false, false, boost::random::exponential_distribution<double>{10.0}(rng), nullptr, {}, false, false}
+    );
+
+    TreeNode* rawPtr = newNode.get();
+    nodes.push_back(std::move(newNode));
+
+    return rawPtr;
+}
+
+TreeNode* Tree::addNode() {
+
+    auto newNode = std::make_unique<TreeNode>(
+        TreeNode{0, "", false, false, 0.0, nullptr, {}, false, false}
     );
 
     TreeNode* rawPtr = newNode.get();
@@ -209,13 +219,47 @@ std::vector<std::string> Tree::parseNewickString(std::string newick){
     return tokens;
 }
 
-Tree::Tree(std::vector<std::string> taxaNames) : Tree(taxaNames.size()){
+Tree::Tree(boost::random::mt19937& rng, std::vector<std::string> taxaNames) : Tree(rng, taxaNames.size()){
     for(int i = 0; i < tips.size(); i++){
         tips[i]->name = taxaNames[i];
     }
 }
 
-Tree::Tree(const Tree& t) : Tree(t.tips.size()){
+Tree::Tree(const Tree& t) {
+    root = addNode();
+    root->isRoot = true;
+
+    auto initTip0 = addNode();
+    initTip0->id = 0;
+    initTip0->isTip = true;
+    auto initTip1 = addNode();
+    initTip1->id = 0;
+    initTip1->isTip = true;
+
+    tips.push_back(initTip0);
+    tips.push_back(initTip1);
+
+    for(int i = 2; i < t.tips.size(); i++){
+        auto newInternal = addNode();
+        auto newTip = addNode();
+        newTip->id = i;
+        newTip->isTip = true;
+        tips.push_back(newTip);
+    }
+
+    int id = tips.size();
+    for(auto& n : nodes){
+        if(n->isTip == false){
+            n->id = id++;
+        }
+    }
+
+    std::sort(nodes.begin(), nodes.end(),
+        [](const std::unique_ptr<TreeNode>& a, const std::unique_ptr<TreeNode>& b) {
+            return a->id < b->id;
+        }
+    );
+
     clone(t);
 }
 
@@ -435,17 +479,18 @@ std::vector<std::string> Tree::getInternalSplitVec(){
     return splits;
 }
 
-double Tree::scaleBranchMove(double delta){
-    auto& rng = RandomVariable::randomVariableInstance();
+double Tree::scaleBranchMove(boost::random::mt19937& rng, double delta){
+    boost::random::uniform_01<double> unif{};
+
 
     TreeNode* p = nullptr;
     do{
-        p = nodes[(int)(rng.uniformRv() * nodes.size())].get();
+        p = nodes[(int)(unif(rng) * nodes.size())].get();
     }
     while(p == root);
 
     double currentV = p->branchLength;
-    double scale = std::exp(delta * (rng.uniformRv() - 0.5));
+    double scale = std::exp(delta * (unif(rng) - 0.5));
     double newV = currentV * scale;
     p->branchLength = newV;
     p->updateTP = true;
@@ -473,17 +518,16 @@ int scaleSubtreeRecurse(TreeNode* n, double val){
     return c + 1;
 }
 
-double Tree::scaleSubtreeMove(double delta){
-    auto& rng = RandomVariable::randomVariableInstance();
-
+double Tree::scaleSubtreeMove(boost::random::mt19937& rng, double delta){
+    boost::random::uniform_01<double> unif{};
 
     TreeNode* p = nullptr;
     do{
-        p = nodes[(int)(rng.uniformRv() * nodes.size())].get();
+        p = nodes[(int)(unif(rng) * nodes.size())].get();
     }
     while(p == root);
 
-    double scale = std::exp(delta * (rng.uniformRv() - 0.5));
+    double scale = std::exp(delta * (unif(rng) - 0.5));
     int numBranches = scaleSubtreeRecurse(p, scale);
 
     TreeNode* q = p->ancestor;
@@ -496,10 +540,10 @@ double Tree::scaleSubtreeMove(double delta){
     return numBranches * std::log(scale);
 }
 
-TreeNode* chooseNodeFromSet(const std::set<TreeNode*>& s){
-   auto& rng = RandomVariable::randomVariableInstance();
+TreeNode* chooseNodeFromSet(boost::random::mt19937& rng, std::set<TreeNode*>& s){
+    boost::random::uniform_01<double> unif{};
 
-    int index = (int)(rng.uniformRv() * s.size());
+    int index = (int)(unif(rng) * s.size());
 
     auto it = s.begin();
     std::advance(it, index);
@@ -507,24 +551,25 @@ TreeNode* chooseNodeFromSet(const std::set<TreeNode*>& s){
     return *it;
 }
 
-double Tree::NNIMove(){
-    auto& rng = RandomVariable::randomVariableInstance();
+double Tree::NNIMove(boost::random::mt19937& rng){
+    boost::random::uniform_01<double> unif{};
+
 
     TreeNode* p = nullptr;
     do{
-        p = nodes[(int)(rng.uniformRv() * nodes.size())].get();
+        p = nodes[(int)(unif(rng) * nodes.size())].get();
     }
     while(p == root || p->isTip);
 
     TreeNode* a = p->ancestor;
 
     std::set<TreeNode*> neighbors1 = p->descendants;
-    TreeNode* n1 = chooseNodeFromSet(neighbors1);
+    TreeNode* n1 = chooseNodeFromSet(rng, neighbors1);
 
     // We exclude
     std::set<TreeNode*> neighbors2 = a->descendants;
     neighbors2.erase(p);
-    TreeNode* n2 = chooseNodeFromSet(neighbors2);
+    TreeNode* n2 = chooseNodeFromSet(rng, neighbors2);
 
     n1->ancestor = a;
     n2->ancestor = p;
@@ -554,8 +599,9 @@ double Tree::NNIMove(){
 }
 
 // Biased interior node selection using the posterior probability of the split that node creates. Inspired by X Meyer 2021
-double Tree::adaptiveNNIMove(double epsilon, const std::unordered_map<std::string, double>& splitPosterior){
-    auto& rng = RandomVariable::randomVariableInstance();
+double Tree::adaptiveNNIMove(boost::random::mt19937& rng, double epsilon, const std::unordered_map<std::string, double>& splitPosterior){
+    boost::random::uniform_01<double> unif{};
+
     
     std::vector<std::string> currentSplits = getInternalSplitVec();
     std::vector<double> nodeProbs(currentSplits.size(), 0.0);
@@ -578,7 +624,7 @@ double Tree::adaptiveNNIMove(double epsilon, const std::unordered_map<std::strin
         }
     }
 
-    double randomNode = rng.uniformRv();
+    double randomNode = unif(rng);
     double cumulativeSum = 0.0;
     double selectedProb = 0.0;
     int nodeID = 0;
@@ -596,12 +642,12 @@ double Tree::adaptiveNNIMove(double epsilon, const std::unordered_map<std::strin
     TreeNode* a = p->ancestor;
 
     std::set<TreeNode*> neighbors1 = p->descendants;
-    TreeNode* n1 = chooseNodeFromSet(neighbors1);
+    TreeNode* n1 = chooseNodeFromSet(rng, neighbors1);
 
     // We exclude
     std::set<TreeNode*> neighbors2 = a->descendants;
     neighbors2.erase(p);
-    TreeNode* n2 = chooseNodeFromSet(neighbors2);
+    TreeNode* n2 = chooseNodeFromSet(rng, neighbors2);
 
     n1->ancestor = a;
     n2->ancestor = p;

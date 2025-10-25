@@ -1,10 +1,10 @@
 #ifndef TREE_HPP
 #define TREE_HPP
+#include <boost/random/mersenne_twister.hpp>
 #include <string>
 #include <set>
 #include <vector>
 #include <memory>
-#include <random>
 #include <unordered_map>
 
 /*
@@ -31,9 +31,9 @@ struct TreeNode {
 class Tree {
     public:
         Tree(void)=delete;
-        Tree(int n); // Generate random tree with n tips
+        Tree(boost::random::mt19937& rng, int n); // Generate random tree with n tips
         Tree(std::string s, std::vector<std::string> taxaNames); // Generate a tree from newick
-        Tree(std::vector<std::string> taxaNames); // Generate a tree from a list of taxa
+        Tree(boost::random::mt19937& rng, std::vector<std::string> taxaNames); // Generate a tree from a list of taxa
         Tree(const Tree& t); // Deep copy
         Tree& operator=(const Tree& t);
         ~Tree();
@@ -49,10 +49,10 @@ class Tree {
         const int getNumTaxa() {return tips.size();}
         TreeNode* getRoot() {return root;}
 
-        double scaleBranchMove(double delta);
-        double scaleSubtreeMove(double delta);
-        double adaptiveNNIMove(double epsilon,const std::unordered_map<std::string, double>& splitPosterior);
-        double NNIMove();
+        double scaleBranchMove(boost::random::mt19937& rng, double delta);
+        double scaleSubtreeMove(boost::random::mt19937& rng, double delta);
+        double adaptiveNNIMove(boost::random::mt19937& rng, double epsilon,const std::unordered_map<std::string, double>& splitPosterior);
+        double NNIMove(boost::random::mt19937& rng);
 
         void updateAll();
     private:
@@ -64,6 +64,7 @@ class Tree {
         std::vector<TreeNode*> tips;
         std::vector<std::unique_ptr<TreeNode>> nodes; // We let the nodes vector own the node unique_ptr
         
+        TreeNode* addNode(boost::random::mt19937& rng);
         TreeNode* addNode();
         int getTaxonIndex(std::string token, std::vector<std::string> taxaNames);
         std::vector<std::string> parseNewickString(std::string newick);

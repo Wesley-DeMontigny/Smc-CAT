@@ -4,10 +4,9 @@
 #include <memory>
 #include <vector>
 
-/*
-    Loads in data from a FASTA File and converts it into an ambiguity-aware data format based on
-    bit flags.
-*/
+/**
+ * @brief Loads in data from a FASTA File and converts it into a matrix encoding the index of each character.
+ */
 class Alignment {
     public:
         Alignment(void) = delete;

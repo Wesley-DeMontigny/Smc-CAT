@@ -1,21 +1,23 @@
 #ifndef PARTICLE_HPP
 #define PARTICLE_HPP
-#include <eigen3/Eigen/Dense>
-#include <memory>
-#include "core/Types.hpp"
+#include "core/Miscellaneous.hpp"
 #include "TransitionProbabilityClass.hpp"
 #include "Tree.hpp"
+#include <boost/random/mersenne_twister.hpp>
+#include <eigen3/Eigen/Dense>
+#include <memory>
 
 class Alignment;
 class SerializedParticle;
 
-/*
-
-*/
+/**
+ * @brief 
+ * 
+ */
 class Particle {
     public:
         Particle(void)=delete;
-        Particle(Alignment& aln, int nR=1, bool initInvar=false);
+        Particle(int seed, Alignment& aln, int nR=1, bool initInvar=false);
         
         double branchMove();
         double getPInvar() { return currentPInvar; }
@@ -27,6 +29,7 @@ class Particle {
         double shapeMove();
         double stationaryMove();
         double topologyMove(const std::unordered_map<std::string, double>& splitPosterior);
+        boost::random::mt19937& getRng(){ return rng; }
         Eigen::Matrix<double, 20, 20> getBaseMatrix() { return *baseMatrix; }
         int getNumCategories() { return currentTransitionProbabilityClasses.size(); }
         int getNumNodes() { return numNodes; }
@@ -41,30 +44,11 @@ class Particle {
         void copy(Particle& p);
         void copyFromSerialized(SerializedParticle& sp);
         void initialize(bool initInvar=false);
-        void read(int id, std::string& dir);
         void refreshLikelihood(bool forceUpdate = false); // Refreshes the likelihood and stores it in the currentLnLikelihood variable
         void reject();
         void setAssignments(std::vector<int>& assignments);
         void setInvariance(double i) { currentPInvar = i; }
-        void tune(); // Tune the proposal parameters
-        void write(int id, std::string& dir);
         void writeToSerialized(SerializedParticle& sp);
-
-        // Variables to keep track of acceptance rates so we can track performance
-        int proposedStationary = 0;
-        int acceptedStationary = 0;
-        int proposedNNI = 0;
-        int acceptedNNI = 0;
-        int proposedAdaptiveNNI = 0;
-        int acceptedAdaptiveNNI = 0;
-        int proposedBranchLength = 0;
-        int acceptedBranchLength = 0;
-        int proposedSubtreeScale = 0;
-        int acceptedSubtreeScale = 0;
-        int proposedInvar = 0;
-        int acceptedInvar = 0;
-        int proposedRate = 0;
-        int acceptedRate = 0;
 
         double aNNIEpsilon = 0.001; // The offset for probabilities in the adaptive NNI. This can be thought of as the probability of selecting an edge with posterior of 1.0
         double shapeDelta = 1.0; // Delta to scale the shape of the gamma distribution
@@ -103,6 +87,8 @@ class Particle {
         std::unique_ptr<int[]> invariantCharacter;
         double currentPInvar = 0.0;
         double oldPInvar = 0.0;
+
+        boost::random::mt19937 rng;
 
         int numRates;
         double currentShape = 1.0;

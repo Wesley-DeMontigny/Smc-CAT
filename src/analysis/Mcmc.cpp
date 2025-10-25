@@ -1,15 +1,15 @@
-#include "Mcmc.hpp"
 #include "analysis/Particle.hpp"
-#include "core/RandomVariable.hpp"
-#include <random>
+#include "Mcmc.hpp"
+#include <boost/random/uniform_01.hpp>
 #include <cmath>
-#include <iostream>
 #include <functional>
+#include <iostream>
 
 Mcmc::Mcmc(void) {}
 
 double Mcmc::run(Particle& model, int iterations, const std::unordered_map<std::string, double>& splitPosterior, bool updateInvar, double tempering){
-    auto& rng = RandomVariable::randomVariableInstance();
+    boost::random::mt19937& rng = model.getRng();
+    boost::random::uniform_01<double> unif{};
 
     model.refreshLikelihood();
     double currentLikelihood = model.lnLikelihood() * tempering;
@@ -19,7 +19,7 @@ double Mcmc::run(Particle& model, int iterations, const std::unordered_map<std::
     bool sampleAlpha = model.getNumRates() > 1;
 
     for(int i = 0; i < iterations; i++){
-        double moveChoice = rng.uniformRv();
+        double moveChoice = unif(rng);
 
         std::function<double(Particle&)> proposal;
         int numGibbs = 2;
@@ -52,7 +52,7 @@ double Mcmc::run(Particle& model, int iterations, const std::unordered_map<std::
             double newPosterior = newPrior + newLikelihood;
             double posteriorRatio = newPosterior - currentPosterior + hastings;
 
-            if(std::log(rng.uniformRv()) <= posteriorRatio){
+            if(std::log(unif(rng)) <= posteriorRatio){
                 model.accept();
                 currentPosterior = newPosterior;
                 currentPrior = newPrior;

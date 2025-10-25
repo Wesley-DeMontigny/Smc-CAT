@@ -1,8 +1,7 @@
 #ifndef SERIALIZED_PARTICLE_HPP
 #define SERIALIZED_PARTICLE_HPP
-#include <vector>
 #include <eigen3/Eigen/Dense>
-
+#include <vector>
 /*
     The minimum information required to save the data from a model particle
 */

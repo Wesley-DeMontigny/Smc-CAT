@@ -1,10 +1,9 @@
 #include "TransitionProbabilityClass.hpp"
-#include "core/Probability.hpp"
-#include "core/RandomVariable.hpp"
+#include <boost/random/gamma_distribution.hpp>
 #include <eigen3/Eigen/Eigenvalues>
 #include <iostream>
 
-TransitionProbabilityClass::TransitionProbabilityClass(int n, int c, Eigen::Matrix<double, 20, 20>* bM) : baseMatrix(bM), updated(false), numRates(c) {
+TransitionProbabilityClass::TransitionProbabilityClass(boost::random::mt19937& rng, int n, int c, Eigen::Matrix<double, 20, 20>* bM) : baseMatrix(bM), updated(false), numRates(c) {
     // Initialize a buffer of transition probabilities for each branch
     transitionProbabilities.reserve(n * numRates);
     for(int i = 0; i < n * numRates; i++){
@@ -17,16 +16,15 @@ TransitionProbabilityClass::TransitionProbabilityClass(int n, int c, Eigen::Matr
     workingMatrix2 = Eigen::Matrix<Eigen::dcomplex, 20, 20>::Zero();
     workingDiag = Eigen::DiagonalMatrix<Eigen::dcomplex, 20>{};
 
-    stationaryDistribution = sampleStationary(Eigen::Vector<double, 20>::Ones());
+    stationaryDistribution = sampleStationary(rng, Eigen::Vector<double, 20>::Ones());
 }
 
-Eigen::Vector<double, 20> TransitionProbabilityClass::sampleStationary(const Eigen::Vector<double, 20>& alpha){
-    auto& rng = RandomVariable::randomVariableInstance();
+Eigen::Vector<double, 20> TransitionProbabilityClass::sampleStationary(boost::random::mt19937& rng, const Eigen::Vector<double, 20>& alpha){
     Eigen::Vector<double, 20> stationaryDistribution = Eigen::Vector<double, 20>::Zero();
 
     double denom = 0.0;
     for (size_t i = 0; i < 20; ++i) {
-        double randGamma = Probability::Gamma::rv(&rng, alpha(i), 1.0);
+        double randGamma = boost::random::gamma_distribution<double>{alpha(i), 1.0}(rng);
         stationaryDistribution(i) = randGamma;
         denom += randGamma;
     }
@@ -85,11 +83,11 @@ void TransitionProbabilityClass::recomputeTransitionProbs(int n, double t, int c
     #endif
 }
 
-double TransitionProbabilityClass::dirichletSimplexMove(double alpha){
+double TransitionProbabilityClass::dirichletSimplexMove(boost::random::mt19937& rng, double alpha){
     Eigen::Vector<double, 20> concentrations = stationaryDistribution;
     concentrations *= alpha;
 
-    Eigen::Vector<double, 20> newStationaryDistribution = sampleStationary(concentrations);
+    Eigen::Vector<double, 20> newStationaryDistribution = sampleStationary(rng, concentrations);
 
     Eigen::Vector<double, 20> revConcentrations = newStationaryDistribution;
     revConcentrations *= alpha;

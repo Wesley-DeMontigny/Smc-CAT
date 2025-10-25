@@ -1,6 +1,7 @@
+#include <boost/random/mersenne_twister.hpp>
+#include <boost/random/uniform_01.hpp>
 #include <iostream>
 #include <iomanip>
-#include <random>
 #include <chrono>
 #include <omp.h>
 #include <unordered_map>
@@ -9,8 +10,6 @@
 #include "analysis/RateMatrices.hpp"
 #include "analysis/Particle.hpp"
 #include "core/Alignment.hpp"
-#include "core/Probability.hpp"
-#include "core/RandomVariable.hpp"
 #include "analysis/Mcmc.hpp"
 
 void computeNextStep(std::vector<double>& rawWeights, std::vector<double>& rawLogLikelihoods, 
@@ -85,9 +84,10 @@ int main(int argc, char** argv) {
     int numThreads = omp_get_max_threads();
     omp_set_num_threads(numThreads);
     bool invar = false;
-    int numRates = 3;
+    int numRates = 2;
 
-    auto& rng = RandomVariable::randomVariableInstance();
+    boost::random::mt19937 rng{1};
+    boost::random::uniform_01<double> unif{};
     
     std::vector<double> rawLogLikelihoods(numParticles, 0);
     std::vector<double> rawWeights(numParticles, -1.0 * std::log(numParticles));
@@ -116,7 +116,7 @@ int main(int argc, char** argv) {
 
     particles.reserve(numThreads);
     for (int t = 0; t < numThreads; t++) {
-        particles.emplace_back(aln, numRates, invar);
+        particles.emplace_back(t, aln, numRates, invar);
     }
 
     // Particle initialization
@@ -162,7 +162,7 @@ int main(int argc, char** argv) {
             std::cout << "Resampling Particles..." << std::endl;
 
             // Systematic resampling
-            double u = rng.uniformRv() / (double)numParticles;
+            double u = unif(rng) / (double)numParticles;
             std::vector<int> assignments;
             assignments.reserve(numParticles);
             double cumulative = normalizedWeights[0];
@@ -191,7 +191,7 @@ int main(int argc, char** argv) {
 
                 mcmc.run(p, rejuvinationIterations, splitPosteriorProbabilities, invar, currentTemp);
 
-                if(rng.uniformRv() < 0.1){
+                if(unif(rng) < 0.1){
                     p.gibbsPartitionMove(currentTemp);
                     p.refreshLikelihood(true);
                 }

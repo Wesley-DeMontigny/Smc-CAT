@@ -1,13 +1,14 @@
 #ifndef TRANSITION_PROBABILITY_CLASS_HPP
 #define TRANSITION_PROBABILITY_CLASS_HPP
+#include "core/Miscellaneous.hpp"
+#include <boost/random/mersenne_twister.hpp>
 #include <eigen3/Eigen/Dense>
 #include <memory>
-#include <random>
 #include <set>
-#include "core/Types.hpp"
 
 struct TransitionProbabilityClass {
-    TransitionProbabilityClass(int n, int c, Eigen::Matrix<double, 20, 20>* bM);
+    TransitionProbabilityClass(void)=delete;
+    TransitionProbabilityClass(boost::random::mt19937& rng, int n, int c, Eigen::Matrix<double, 20, 20>* bM);
 
     std::vector<Eigen::Matrix<CL_TYPE, 20, 20>> transitionProbabilities; // Indexed by node
     
@@ -18,9 +19,9 @@ struct TransitionProbabilityClass {
 
     void recomputeEigens();
     void recomputeTransitionProbs(int n, double t, int c, double r);
-    double dirichletSimplexMove(double alpha);
+    double dirichletSimplexMove(boost::random::mt19937& rng, double alpha);
 
-    static Eigen::Vector<double, 20> sampleStationary(const Eigen::Vector<double, 20>& alpha);
+    static Eigen::Vector<double, 20> sampleStationary(boost::random::mt19937& rng, const Eigen::Vector<double, 20>& alpha);
     static double stationarylnPdf(const Eigen::Vector<double, 20>& concentration, const Eigen::Vector<double, 20>& x);
 
     bool updated;
