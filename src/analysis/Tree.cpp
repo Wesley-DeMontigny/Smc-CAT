@@ -33,7 +33,7 @@ Tree::Tree(boost::random::mt19937& rng, int n){
     tips.push_back(B);
 
     for(int i = 2; i < n; i++){
-        int randomIndex = (int)(unif(rng) * i);
+        int randomIndex = static_cast<int>(unif(rng) * i);
         auto randomTip = tips[randomIndex];
 
         auto newInternal = addNode(rng);
@@ -76,7 +76,7 @@ Tree::Tree(boost::random::mt19937& rng, int n){
     regeneratePostOrder();
 }
 
-Tree::Tree(std::string newick, std::vector<std::string> taxaNames){
+Tree::Tree(std::string newick, const std::vector<std::string>& taxaNames){
     std::vector<std::string> tokens = parseNewickString(newick);
 
     TreeNode* p = nullptr;
@@ -87,6 +87,7 @@ Tree::Tree(std::string newick, std::vector<std::string> taxaNames){
             TreeNode* newNode = addNode();
             if(p == nullptr){
                 root = newNode;
+                newNode->branchLength = 0.0;
                 newNode->isRoot = true;
             }
             else{
@@ -164,76 +165,54 @@ Tree::Tree(std::string newick, std::vector<std::string> taxaNames){
     regeneratePostOrder();
 }
 
-TreeNode* Tree::addNode(boost::random::mt19937& rng) {
-
-    auto newNode = std::make_unique<TreeNode>(
-        TreeNode{0, "", false, false, boost::random::exponential_distribution<double>{10.0}(rng), nullptr, {}, false, false}
-    );
-
-    TreeNode* rawPtr = newNode.get();
-    nodes.push_back(std::move(newNode));
-
-    return rawPtr;
-}
-
-TreeNode* Tree::addNode() {
-
-    auto newNode = std::make_unique<TreeNode>(
-        TreeNode{0, "", false, false, 0.0, nullptr, {}, false, false}
-    );
-
-    TreeNode* rawPtr = newNode.get();
-    nodes.push_back(std::move(newNode));
-
-    return rawPtr;
-}
-
-int Tree::getTaxonIndex(std::string token, const std::vector<std::string>& taxaNames) const{
-
-    for(int i = 0, n = taxaNames.size(); i < n; i++){
-        if(taxaNames[i] == token)
-            return i;
-    }
-
-    return -1;
-}
-
-std::vector<std::string> Tree::parseNewickString(std::string newick) const {
-    std::vector<std::string> tokens;
-    std::string str = "";
-    for(int i = 0; i < newick.length(); i++){
-        char c = newick[i];
-        if(c == '(' || c == ')' || c == ',' || c == ':' || c == ';'){
-            if(str != ""){
-                tokens.push_back(str);
-                str = "";
-            }
-
-            tokens.push_back(std::string(1, c));
-        }
-        else {
-            str += std::string(1, c);
-        }
-    }
-
-    return tokens;
-}
-
-Tree::Tree(boost::random::mt19937& rng, std::vector<std::string> taxaNames) : Tree(rng, taxaNames.size()){
+Tree::Tree(boost::random::mt19937& rng, const std::vector<std::string>& taxaNames) : Tree(rng, taxaNames.size()){
     for(int i = 0; i < tips.size(); i++){
         tips[i]->name = taxaNames[i];
     }
 }
 
+Tree::Tree(const std::vector<boost::dynamic_bitset<>>& splits, const std::vector<std::string>& taxaNames) {
+
+    for(int i = 0; i < taxaNames.size(); i++){
+        auto newTip = addNode();
+        newTip->isTip = true;
+        newTip->name = taxaNames[i];
+        newTip->id = i;
+        tips.push_back(newTip);
+    }
+
+    boost::dynamic_bitset<> all(taxaNames.size());
+    all.flip();
+    root = buildTree(splits, all);
+    root->isRoot = true;
+    root->branchLength = 0.0;
+
+    int id = tips.size();
+    for(auto& n : nodes){
+        if(n->isTip == false){
+            n->id = id++;
+        }
+    }
+
+    std::sort(nodes.begin(), nodes.end(),
+        [](const std::unique_ptr<TreeNode>& a, const std::unique_ptr<TreeNode>& b) {
+            return a->id < b->id;
+        }
+    );
+
+    regeneratePostOrder();
+}
+
 Tree::Tree(const Tree& t) {
     root = addNode();
     root->isRoot = true;
+    root->branchLength = 0.0;
 
     auto initTip0 = addNode();
     initTip0->id = 0;
     initTip0->isTip = true;
     auto initTip1 = addNode();
-    initTip1->id = 0;
+    initTip1->id = 1;
     initTip1->isTip = true;
 
     tips.push_back(initTip0);
@@ -303,7 +282,102 @@ void Tree::clone(const Tree& t){
     }
 }
 
-Tree::~Tree() {}
+TreeNode* Tree::buildTree(const std::vector<boost::dynamic_bitset<>>& splits, const boost::dynamic_bitset<>& taxa){
+    size_t taxaSize = taxa.count();
+    if(taxaSize > 2){
+        auto newNode = addNode();
+
+        std::vector<boost::dynamic_bitset<>> relevant;
+        relevant.reserve(splits.size());
+        for (const auto& s : splits) {
+            if ((s & taxa).any() && ((~s) & taxa).any())
+                relevant.push_back(s);
+        }
+
+        auto& s = relevant.front();
+        boost::dynamic_bitset<> left  = s & taxa;
+        boost::dynamic_bitset<> right = (~s) & taxa;
+
+        auto leftNode = buildTree(relevant, left);
+        auto rightNode = buildTree(relevant, right);
+        leftNode->ancestor = newNode;
+        rightNode->ancestor = newNode;
+        newNode->descendants.insert(leftNode);
+        newNode->descendants.insert(rightNode);
+
+        return newNode;
+    }
+    else if(taxaSize == 2){
+        auto newNode = addNode();
+
+        for(int i = 0; i < taxa.size(); i++){
+            if(taxa[i] == 1){
+                tips[i]->ancestor = newNode;
+                newNode->descendants.insert(tips[i]);
+            }
+        }
+
+        return newNode;
+    }
+    else{
+        return tips[taxa.find_first()];
+    }
+}
+
+TreeNode* Tree::addNode(boost::random::mt19937& rng) {
+
+    auto newNode = std::make_unique<TreeNode>(
+        TreeNode{0, "", false, false, boost::random::exponential_distribution<double>{10.0}(rng), nullptr, {}, false, false}
+    );
+
+    TreeNode* rawPtr = newNode.get();
+    nodes.push_back(std::move(newNode));
+
+    return rawPtr;
+}
+
+TreeNode* Tree::addNode() {
+
+    auto newNode = std::make_unique<TreeNode>(
+        TreeNode{0, "", false, false, 1.0, nullptr, {}, false, false}
+    );
+
+    TreeNode* rawPtr = newNode.get();
+    nodes.push_back(std::move(newNode));
+
+    return rawPtr;
+}
+
+int Tree::getTaxonIndex(std::string token, const std::vector<std::string>& taxaNames) const{
+
+    for(int i = 0, n = taxaNames.size(); i < n; i++){
+        if(taxaNames[i] == token)
+            return i;
+    }
+
+    return -1;
+}
+
+std::vector<std::string> Tree::parseNewickString(std::string newick) const {
+    std::vector<std::string> tokens;
+    std::string str = "";
+    for(int i = 0; i < newick.length(); i++){
+        char c = newick[i];
+        if(c == '(' || c == ')' || c == ',' || c == ':' || c == ';'){
+            if(str != ""){
+                tokens.push_back(str);
+                str = "";
+            }
+
+            tokens.push_back(std::string(1, c));
+        }
+        else {
+            str += std::string(1, c);
+        }
+    }
+
+    return tokens;
+}
 
 std::string Tree::generateNewick() const {
     std::string output = "";
@@ -395,12 +469,12 @@ void Tree::updateAll(){
 
 std::set<boost::dynamic_bitset<>> Tree::getSplits() const{
     std::set<boost::dynamic_bitset<>> splits;
-    std::unordered_map<TreeNode*, boost::dynamic_bitset<>> splitMap;
+    std::unordered_map<TreeNode*, boost::dynamic_bitset<>, NodeHash> splitMap;
     boost::dynamic_bitset<> zeroSet = boost::dynamic_bitset<>{tips.size()};
 
     for(int i = 0; i < tips.size(); i++){
         boost::dynamic_bitset<> tipSet(zeroSet);
-        tipSet.flip(i);
+        tipSet[i] = 1;
         splitMap[nodes[i].get()] = tipSet;
     }
 
@@ -411,7 +485,7 @@ std::set<boost::dynamic_bitset<>> Tree::getSplits() const{
                 boost::dynamic_bitset<> descSet = splitMap[d];
                 for(int i = 0; i < tips.size(); i++){
                     if(descSet[i] == 1){
-                        newSet.flip(i);
+                        newSet[i] = 1;
                     }
                 }
             }
@@ -432,12 +506,12 @@ std::set<boost::dynamic_bitset<>> Tree::getSplits() const{
 
 std::vector<boost::dynamic_bitset<>> Tree::getInternalSplitVec() const {
     std::vector<boost::dynamic_bitset<>> splits(nodes.size() - tips.size() - 1, boost::dynamic_bitset{tips.size()});
-    std::unordered_map<TreeNode*, boost::dynamic_bitset<>> splitMap;
+    std::unordered_map<TreeNode*, boost::dynamic_bitset<>, NodeHash> splitMap;
     boost::dynamic_bitset<> zeroSet = boost::dynamic_bitset<>{tips.size()};
 
     for(int i = 0; i < tips.size(); i++){
         boost::dynamic_bitset<> tipSet(zeroSet);
-        tipSet.flip(i);
+        tipSet[i] = 1;
         splitMap[nodes[i].get()] = tipSet;
     }
 
@@ -448,19 +522,18 @@ std::vector<boost::dynamic_bitset<>> Tree::getInternalSplitVec() const {
                 boost::dynamic_bitset<> descSet = splitMap[d];
                 for(int i = 0; i < tips.size(); i++){
                     if(descSet[i] == 1){
-                        newSet.flip(i);
+                        newSet[i] = 1;
                     }
                 }
             }
 
             boost::dynamic_bitset complement(newSet);
             complement.flip();
-
             if(complement < newSet)
                 splits[n->id - tips.size() - 1] = complement;
             else
                 splits[n->id - tips.size() - 1] = newSet;
-            
+
             splitMap[n] = newSet;
         }
     }
@@ -474,7 +547,7 @@ double Tree::scaleBranchMove(boost::random::mt19937& rng, double delta){
 
     TreeNode* p = nullptr;
     do{
-        p = nodes[(int)(unif(rng) * nodes.size())].get();
+        p = nodes[static_cast<int>(unif(rng) * nodes.size())].get();
     }
     while(p == root);
 
@@ -512,7 +585,7 @@ double Tree::scaleSubtreeMove(boost::random::mt19937& rng, double delta){
 
     TreeNode* p = nullptr;
     do{
-        p = nodes[(int)(unif(rng) * nodes.size())].get();
+        p = nodes[static_cast<int>(unif(rng) * nodes.size())].get();
     }
     while(p == root);
 
@@ -532,7 +605,7 @@ double Tree::scaleSubtreeMove(boost::random::mt19937& rng, double delta){
 TreeNode* chooseNodeFromSet(boost::random::mt19937& rng, std::set<TreeNode*>& s){
     boost::random::uniform_01<double> unif{};
 
-    int index = (int)(unif(rng) * s.size());
+    int index = static_cast<int>(unif(rng) * s.size());
 
     auto it = s.begin();
     std::advance(it, index);
@@ -546,7 +619,7 @@ double Tree::NNIMove(boost::random::mt19937& rng){
 
     TreeNode* p = nullptr;
     do{
-        p = nodes[(int)(unif(rng) * nodes.size())].get();
+        p = nodes[static_cast<int>(unif(rng) * nodes.size())].get();
     }
     while(p == root || p->isTip);
 

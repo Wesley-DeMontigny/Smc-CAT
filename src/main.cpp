@@ -85,13 +85,14 @@ int main(int argc, char** argv) {
     int numThreads = omp_get_max_threads();
     omp_set_num_threads(numThreads);
     bool invar = false;
-    int numRates = 2;
+    int numRates = 1;
 
     boost::random::mt19937 rng{1};
     boost::random::uniform_01<double> unif{};
     
     std::vector<double> rawLogLikelihoods(numParticles, 0);
     std::vector<double> rawWeights(numParticles, -1.0 * std::log(numParticles));
+    std::vector<double> normalizedWeights(numParticles, 0.0);
 
     std::unordered_map<boost::dynamic_bitset<>, double> splitPosteriorProbabilities;
     std::vector<std::set<boost::dynamic_bitset<>>> particleSplits;
@@ -139,7 +140,6 @@ int main(int argc, char** argv) {
     std::cout << "Starting SMC..." << std::endl;
     double lastTemp = 0.0;
     for(int i = 1; lastTemp < 1.0; i++){
-        std::vector<double> normalizedWeights(numParticles, 0.0);
         double currentTemp = lastTemp;
         double ESS = 0.0;
         computeNextStep(rawWeights, rawLogLikelihoods, normalizedWeights, ESS, currentTemp, lastTemp, numParticles);
@@ -163,7 +163,7 @@ int main(int argc, char** argv) {
             std::cout << "Resampling Particles..." << std::endl;
 
             // Systematic resampling
-            double u = unif(rng) / (double)numParticles;
+            double u = unif(rng) / static_cast<double>(numParticles);
             std::vector<int> assignments;
             assignments.reserve(numParticles);
             double cumulative = normalizedWeights[0];
@@ -208,45 +208,49 @@ int main(int argc, char** argv) {
         lastTemp = currentTemp;
     }
 
-    std::cout << "Computing Maximum Clade Consensus Tree..." << std::endl;
+    std::cout << "Computing the Majority Consensus Tree..." << std::endl;
+    std::vector<std::pair<boost::dynamic_bitset<>, double>> sortedSplits(
+        splitPosteriorProbabilities.begin(),
+        splitPosteriorProbabilities.end()
+    );
+    std::sort(sortedSplits.begin(), sortedSplits.end(), [](auto& a, auto& b){
+        return a.second > b.second;
+    });
 
-    std::vector<double> normalizedWeights(numParticles, 0.0);
-    double maxW = *std::max_element(rawWeights.begin(), rawWeights.end());
-    double total = 0.0;
-    for (int n = 0; n < numParticles; n++) {
-        normalizedWeights[n] = std::exp(rawWeights[n] - maxW);
-        total += normalizedWeights[n];
+    std::vector<boost::dynamic_bitset<>> selectedSplits;
+    for(auto& split : sortedSplits){
+        bool compatible = true;
+        for(auto& bitset : selectedSplits){
+            if(!((split.first & bitset).none() ||
+                (split.first & ~bitset).none() ||
+                (~split.first & bitset).none() ||
+                (~split.first & ~bitset).none())){ // Four point condition for split compatibility
+                compatible = false;
+                break;
+            }
+        }
+        if(compatible){ // Anchor splits in orientation before pushing
+            if (split.first.test(0))
+                selectedSplits.push_back(split.first);
+            else
+                selectedSplits.push_back(~split.first);
+        }
     }
+    std::sort(selectedSplits.begin(), selectedSplits.end(), [](auto& a, auto& b){
+        return a.count() < b.count();
+    });
 
-    for (int n = 0; n < numParticles; n++) {
-        normalizedWeights[n] /= total;
-    }
+    auto consensusTree = Tree(selectedSplits, aln.getTaxaNames());
+    std::cout << consensusTree.generateNewick(splitPosteriorProbabilities) << std::endl;
+    std::cout << currentSerializedParticles[0].newick << std::endl;
 
-    std::vector<std::set<boost::dynamic_bitset<>>> deduped;
-    std::set<std::set<boost::dynamic_bitset<>>> seen;
-    for (auto& s : particleSplits)
-        seen.insert(s);
-    deduped.assign(seen.begin(), seen.end());
+    // Get mean branch lengths
 
+    std::set<std::set<boost::dynamic_bitset<>>> deduped(
+        particleSplits.begin(),
+        particleSplits.end()
+    );
     std::cout << std::format("There were {} unique topologies in the final approximation", deduped.size()) << std::endl;
-
-    // Get max score
-    int maxID = 0;
-    double maxScore = -INFINITY;
-    for(int i = 0; i < particles.size(); i++){
-        double currentScore = 0.0;
-        for(const auto& s : particleSplits[i]){
-            currentScore += std::log(splitPosteriorProbabilities[s]);
-        }
-
-        if(currentScore > maxScore || (currentScore == maxScore && normalizedWeights[i] > normalizedWeights[maxID])){
-            maxScore = currentScore;
-            maxID = i;
-        }
-    }
-
-    particles[0].copyFromSerialized(currentSerializedParticles[maxID]);
-    std::cout << particles[0].getNewick(splitPosteriorProbabilities) << std::endl;
 
     std::chrono::steady_clock::time_point postAnalysis = std::chrono::steady_clock::now();
     std::cout << "The analysis completed in " << std::chrono::duration_cast<std::chrono::minutes>(postAnalysis - preAnalysis).count() << "[minutes]" << std::endl;

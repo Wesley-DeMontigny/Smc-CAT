@@ -368,7 +368,7 @@ double Particle::lnPrior(){
     double lnP = 0.0;
 
     // Tree Prior
-    double shape = (double)(numNodes - 1);
+    double shape = static_cast<double>(numNodes - 1);
     double treeRate = 10.0;
     double lengthSum = 0.0;
     for(auto n : currentPhylogeny.getPostOrder()){
@@ -491,7 +491,7 @@ void Particle::refreshLikelihood(bool forceUpdate){
             std::fill(rescalePointer, rescalePointer + nodeSpacer, 0.0);
 
             for(int c = 0; c < nodeSpacer; c++){
-                double max = (double)(pN->maxCoeff()); // We just show the cast here in case we are using single precision
+                double max = static_cast<double>(pN->maxCoeff()); // We just show the cast here in case we are using single precision
                 *pN /= max;
                 *rescalePointer = std::log(max);
 
@@ -652,7 +652,7 @@ double Particle::gibbsPartitionMove(double tempering){
     const auto postOrder = currentPhylogeny.getPostOrder();
 
     int numAux = 5;
-    int numIter = (int)(numChar/2.0);
+    int numIter = static_cast<int>(numChar/2.0);
 
     double alphaSplit = std::log(dppAlpha/numAux);
 
@@ -669,7 +669,7 @@ double Particle::gibbsPartitionMove(double tempering){
         #if TIME_PROFILE==1
         std::chrono::steady_clock::time_point preIter = std::chrono::steady_clock::now();
         #endif
-        int randomSite = (int)(unif(rng) * numChar);
+        int randomSite = static_cast<int>(unif(rng) * numChar);
         int originalCategory = -1;
         for (int i = 0; i < currentTransitionProbabilityClasses.size(); i++) {
             if (currentTransitionProbabilityClasses[i].members.count(randomSite)) {
@@ -746,7 +746,7 @@ double Particle::gibbsPartitionMove(double tempering){
                 std::fill(rescalePointer, rescalePointer + activeNodeSpacer, 0.0);
 
                 for(int c = 0; c < activeNodeSpacer; c++){
-                    double max = (double)(pN->maxCoeff());
+                    double max = static_cast<double>(pN->maxCoeff());
                     *pN /= max;
                     *rescalePointer = std::log(max);
 

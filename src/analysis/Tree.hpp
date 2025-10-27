@@ -8,9 +8,10 @@
 #include <memory>
 #include <unordered_map>
 
-/*
-
-*/
+/**
+ * @brief 
+ * 
+ */
 struct TreeNode {
     int id;
     std::string name;
@@ -26,6 +27,12 @@ struct TreeNode {
     bool updateTP;
 };
 
+struct NodeHash {
+    size_t operator()(const TreeNode* n) const noexcept {
+        return std::hash<int>{}(n->id);
+    }
+};
+
 /**
  * @brief 
  * 
@@ -34,11 +41,11 @@ class Tree {
     public:
         Tree(void)=delete;
         Tree(boost::random::mt19937& rng, int n); // Generate random tree with n tips
-        Tree(std::string s, std::vector<std::string> taxaNames); // Generate a tree from newick
-        Tree(boost::random::mt19937& rng, std::vector<std::string> taxaNames); // Generate a tree from a list of taxa
+        Tree(std::string s, const std::vector<std::string>& taxaNames); // Generate a tree from newick
+        Tree(boost::random::mt19937& rng, const std::vector<std::string>& taxaNames); // Generate a tree from a list of taxa
+        Tree(const std::vector<boost::dynamic_bitset<>>& splits, const std::vector<std::string>& taxaNames);
         Tree(const Tree& t); // Deep copy
         Tree& operator=(const Tree& t); // Assignment copy
-        ~Tree();
 
         std::string generateNewick(const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosteriorProbabilities) const;
         std::string generateNewick() const; // Generates a Newick string for the tree. Assumes the post-order is correct.
@@ -68,6 +75,7 @@ class Tree {
         
         TreeNode* addNode(boost::random::mt19937& rng);
         TreeNode* addNode();
+        TreeNode* buildTree(const std::vector<boost::dynamic_bitset<>>& splits, const boost::dynamic_bitset<>& taxa);
         int getTaxonIndex(std::string token, const std::vector<std::string>& taxaNames) const;
         std::vector<std::string> parseNewickString(std::string newick) const;
 
