@@ -1,5 +1,6 @@
 #include "Tree.hpp"
 #include <algorithm>
+#include <boost/accumulators/statistics/sum.hpp>
 #include <boost/random/uniform_01.hpp>
 #include <boost/random/exponential_distribution.hpp>
 #include <cassert>
@@ -282,6 +283,52 @@ void Tree::clone(const Tree& t){
     }
 }
 
+void Tree::assignMeanBranchLengths(const std::vector<std::string>& newickStrings, const std::vector<double>& normalizedWeights, const std::vector<std::string>& taxaNames){
+    using Acc = boost::accumulators::accumulator_set<
+        double, 
+        boost::accumulators::stats<boost::accumulators::tag::weighted_mean>, 
+        double
+    >;
+
+    std::unordered_map<boost::dynamic_bitset<>, Acc> branchMeans{};
+    std::unordered_map<TreeNode*, boost::dynamic_bitset<>, NodeHash> splitMap;
+    boost::dynamic_bitset<> zeroSet = boost::dynamic_bitset<>{tips.size()};
+
+    for(int i = 0; i < tips.size(); i++){
+        boost::dynamic_bitset<> tipSet(zeroSet);
+        tipSet[i] = 1;
+        splitMap[nodes[i].get()] = tipSet;
+    }
+
+    for(TreeNode* n : postOrder){
+        if(!n->isTip && !n->isRoot){
+            boost::dynamic_bitset<> newSet(zeroSet);
+            for(TreeNode* d : n->descendants){
+                boost::dynamic_bitset<> descSet = splitMap[d];
+                for(int i = 0; i < tips.size(); i++){
+                    if(descSet[i] == 1){
+                        newSet[i] = 1;
+                    }
+                }
+            }
+            splitMap[n] = newSet;
+        }
+    }
+
+    for(const auto& s : splitMap) {
+        branchMeans.emplace(s.second, Acc{});
+    }
+
+    for(int i = 0; i < newickStrings.size(); i++){
+        std::vector<std::string> tokens = parseNewickString(newickStrings[i]);
+        parseAndAccumulate(tokens, normalizedWeights[i], taxaNames, branchMeans);
+    }
+
+    for(auto& pair : splitMap){
+        pair.first->branchLength = boost::accumulators::weighted_mean(branchMeans[pair.second]);
+    }
+}
+
 TreeNode* Tree::buildTree(const std::vector<boost::dynamic_bitset<>>& splits, const boost::dynamic_bitset<>& taxa){
     size_t taxaSize = taxa.count();
     if(taxaSize > 2){
@@ -358,7 +405,7 @@ int Tree::getTaxonIndex(std::string token, const std::vector<std::string>& taxaN
     return -1;
 }
 
-std::vector<std::string> Tree::parseNewickString(std::string newick) const {
+std::vector<std::string> Tree::parseNewickString(const std::string newick) const {
     std::vector<std::string> tokens;
     std::string str = "";
     for(int i = 0; i < newick.length(); i++){
@@ -390,7 +437,7 @@ std::string Tree::generateNewick() const {
 }
 
 std::string Tree::generateNewick(const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosteriorProbabilities) const{
-    std::vector<boost::dynamic_bitset<>> splits = getInternalSplitVec();
+    std::vector<boost::dynamic_bitset<>> splits = getSplitVector();
 
     std::string output = "";
 
@@ -420,6 +467,78 @@ std::string Tree::recursiveNewickGenerate(std::string s, TreeNode* p) const{
     }
 
     return s;
+}
+
+boost::dynamic_bitset<> Tree::parseAndAccumulate(const std::vector<std::string>& tokens, double normalizedWeight, const std::vector<std::string>& taxaNames, std::unordered_map<boost::dynamic_bitset<>, boost::accumulators::accumulator_set<double, boost::accumulators::stats<boost::accumulators::tag::weighted_mean>, double>>& branchMeans) {
+    int numTaxa = taxaNames.size();
+    std::vector<boost::dynamic_bitset<>> stack; // Holds splits as we go down the tree
+    boost::dynamic_bitset<> emptySet{0};
+
+    boost::dynamic_bitset<> lastCompletedSubtree;
+    bool haveLast = false;
+
+    bool readingBranchLength = false;
+    double currentBranchLength = 0.0;
+
+    for (int i = 0; i < tokens.size(); i++){
+        const std::string& tok = tokens[i];
+
+        if (tok == "("){
+            stack.push_back(emptySet);
+        }
+        else if (tok == ")"){
+            boost::dynamic_bitset<> clade(numTaxa);
+
+            while (!stack.empty() && stack.back().size() != 0){
+                clade |= stack.back();
+                stack.pop_back();
+            
+            }
+            if (stack.empty()) throw std::runtime_error("Unbalanced tree!");
+
+            stack.pop_back();
+
+            lastCompletedSubtree = clade;
+            haveLast = true;
+            stack.push_back(clade);
+        }
+        else if (tok == ","){
+            continue;
+        }
+        else if (tok == ":"){
+            readingBranchLength = true;
+        }
+        else if (tok == ";"){
+            break;
+        }
+        else{ // label or length number
+            if (readingBranchLength){
+                currentBranchLength= std::atof(tok.c_str());
+                if (haveLast){
+                    auto key = lastCompletedSubtree;
+                    auto complement = ~key;
+
+                    if(branchMeans.count(key) > 0){
+                        branchMeans[key](currentBranchLength, boost::accumulators::weight = normalizedWeight);
+                    }
+                    else if(branchMeans.count(complement) > 0){
+                        branchMeans[complement](currentBranchLength, boost::accumulators::weight = normalizedWeight);
+                    }
+                }
+                readingBranchLength = false;
+            } 
+            else{
+                int tipIndex = getTaxonIndex(tok, taxaNames);
+                boost::dynamic_bitset<> leaf(numTaxa);
+                leaf.set(tipIndex);
+                stack.push_back(std::move(leaf));
+                lastCompletedSubtree = stack.back();
+                haveLast = true;
+            }
+        }
+    }
+
+    return emptySet;
 }
 
 std::string Tree::recursiveNewickGenerate(std::string s, TreeNode* p, const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosteriorProbabilities, const std::vector<boost::dynamic_bitset<>>& splitVec) const{
@@ -504,7 +623,7 @@ std::set<boost::dynamic_bitset<>> Tree::getSplits() const{
     return splits;
 }
 
-std::vector<boost::dynamic_bitset<>> Tree::getInternalSplitVec() const {
+std::vector<boost::dynamic_bitset<>> Tree::getSplitVector() const {
     std::vector<boost::dynamic_bitset<>> splits(nodes.size() - tips.size() - 1, boost::dynamic_bitset{tips.size()});
     std::unordered_map<TreeNode*, boost::dynamic_bitset<>, NodeHash> splitMap;
     boost::dynamic_bitset<> zeroSet = boost::dynamic_bitset<>{tips.size()};
@@ -665,7 +784,7 @@ double Tree::adaptiveNNIMove(boost::random::mt19937& rng, double epsilon, const 
     boost::random::uniform_01<double> unif{};
 
     
-    std::vector<boost::dynamic_bitset<>> currentSplits = getInternalSplitVec();
+    std::vector<boost::dynamic_bitset<>> currentSplits = getSplitVector();
     std::vector<double> nodeProbs(currentSplits.size(), 0.0);
 
     double total = 0.0;
@@ -736,7 +855,7 @@ double Tree::adaptiveNNIMove(boost::random::mt19937& rng, double epsilon, const 
     regeneratePostOrder();
 
     // Refresh the current splits and probabilities to compute the hastings ratio
-    currentSplits = getInternalSplitVec();
+    currentSplits = getSplitVector();
     total = 0.0;
     for(TreeNode* n : postOrder){
         if(!n->isRoot && !n->isTip){

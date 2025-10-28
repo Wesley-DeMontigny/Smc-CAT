@@ -1,5 +1,8 @@
 #ifndef TREE_HPP
 #define TREE_HPP
+#include <boost/accumulators/statistics.hpp>
+#include <boost/accumulators/accumulators.hpp>
+#include <boost/accumulators/statistics/weighted_mean.hpp>
 #include <boost/dynamic_bitset.hpp>
 #include <boost/random/mersenne_twister.hpp>
 #include <string>
@@ -19,7 +22,7 @@ struct TreeNode {
     bool isRoot;
     double branchLength;
 
-    // With these raw pointers we are enforcing that our tree node's access will not outlive the node vector
+    // With these raw pointers we must require that our tree node's access will not outlive the node vector
     TreeNode* ancestor;
     std::set<TreeNode*> descendants;
 
@@ -47,12 +50,13 @@ class Tree {
         Tree(const Tree& t); // Deep copy
         Tree& operator=(const Tree& t); // Assignment copy
 
+        void assignMeanBranchLengths(const std::vector<std::string>& newickStrings, const std::vector<double>& normalizedWeights, const std::vector<std::string>& taxaNames);
         std::string generateNewick(const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosteriorProbabilities) const;
         std::string generateNewick() const; // Generates a Newick string for the tree. Assumes the post-order is correct.
         const std::vector<TreeNode*>& getPostOrder() const {return postOrder;}
         const std::vector<TreeNode*>& getTips() const {return tips;}
         std::set<boost::dynamic_bitset<>> getSplits() const;
-        std::vector<boost::dynamic_bitset<>> getInternalSplitVec() const;
+        std::vector<boost::dynamic_bitset<>> getSplitVector() const;
 
         const int getNumNodes() const {return postOrder.size();}
         const int getNumTaxa() const {return tips.size();}
@@ -77,9 +81,13 @@ class Tree {
         TreeNode* addNode();
         TreeNode* buildTree(const std::vector<boost::dynamic_bitset<>>& splits, const boost::dynamic_bitset<>& taxa);
         int getTaxonIndex(std::string token, const std::vector<std::string>& taxaNames) const;
-        std::vector<std::string> parseNewickString(std::string newick) const;
+        std::vector<std::string> parseNewickString(const std::string newick) const;
 
         void recursivePostOrderAssign(TreeNode* p);
+boost::dynamic_bitset<> parseAndAccumulate(const std::vector<std::string>& tokens,
+                         double normalizedWeight,
+                         const std::vector<std::string>& taxaNames,
+                         std::unordered_map<boost::dynamic_bitset<>, boost::accumulators::accumulator_set<double, boost::accumulators::stats<boost::accumulators::tag::weighted_mean>, double>>& branchMeans);
         std::string recursiveNewickGenerate(std::string s, TreeNode* p) const;
         std::string recursiveNewickGenerate(std::string s, TreeNode* p, const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosteriorProbabilities, const std::vector<boost::dynamic_bitset<>>& splitVec) const;
 };

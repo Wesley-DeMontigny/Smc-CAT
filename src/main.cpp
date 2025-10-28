@@ -241,16 +241,20 @@ int main(int argc, char** argv) {
     });
 
     auto consensusTree = Tree(selectedSplits, aln.getTaxaNames());
+    std::vector<std::string> newickStrings;
+    for(auto& particle : currentSerializedParticles){
+        newickStrings.push_back(particle.newick);
+    }
+    consensusTree.assignMeanBranchLengths(newickStrings, normalizedWeights, aln.getTaxaNames());
+
     std::cout << consensusTree.generateNewick(splitPosteriorProbabilities) << std::endl;
-    std::cout << currentSerializedParticles[0].newick << std::endl;
 
     // Get mean branch lengths
-
     std::set<std::set<boost::dynamic_bitset<>>> deduped(
         particleSplits.begin(),
         particleSplits.end()
     );
-    std::cout << std::format("There were {} unique topologies in the final approximation", deduped.size()) << std::endl;
+    std::cout << "There were " << deduped.size() << " unique topologies in the final approximation" << std::endl;
 
     std::chrono::steady_clock::time_point postAnalysis = std::chrono::steady_clock::now();
     std::cout << "The analysis completed in " << std::chrono::duration_cast<std::chrono::minutes>(postAnalysis - preAnalysis).count() << "[minutes]" << std::endl;
