@@ -112,6 +112,58 @@ int main(int argc, char** argv) {
     std::cout << "Utilizing " << numThreads << " threads for working with " << numParticles << std::endl;
 
     Mcmc mcmc{};
+    mcmc.emplaceMove(std::tuple{
+        2.0,
+        [&aln](Particle& m){
+            return static_cast<int>(aln.getNumTaxa() / 2.0);
+        },
+        [](Particle& m){
+            return m.branchMove();
+        }
+    });
+    mcmc.emplaceMove(std::tuple{
+        2.0,
+        [&aln](Particle& m){
+            return static_cast<int>(aln.getNumTaxa() / 2.0);
+        },
+        [&splitPosteriorProbabilities](Particle& m){
+            return m.topologyMove(splitPosteriorProbabilities);
+        }
+    });
+    mcmc.emplaceMove(std::tuple{
+        1.0,
+        [](Particle& m){
+            return m.getNumCategories() * 2;
+        },
+        [](Particle& m){
+            return m.stationaryMove();
+        }
+    });
+    if(numRates > 1){
+        mcmc.emplaceMove(std::tuple{
+            1.0,
+            [](Particle& m){
+                return 3;
+            },
+            [](Particle& m){
+                return m.shapeMove();
+            }
+        });
+    }
+    if(invar){
+        mcmc.emplaceMove(std::tuple{
+            1.0,
+            [](Particle& m){
+                return 3;
+            },
+            [](Particle& m){
+                return m.invarMove();
+            }
+        });
+    }
+    mcmc.initMoveProbs();
+
+
     std::vector<Particle> particles;
 
     std::chrono::steady_clock::time_point preAnalysis = std::chrono::steady_clock::now();
@@ -190,7 +242,7 @@ int main(int argc, char** argv) {
                 int particleID = assignments[n];
                 p.copyFromSerialized(currentSerializedParticles[particleID]);
 
-                mcmc.run(p, rejuvinationIterations, splitPosteriorProbabilities, invar, currentTemp);
+                mcmc.run(p, rejuvinationIterations, currentTemp);
 
                 if(unif(rng) < 0.1){
                     p.gibbsPartitionMove(currentTemp);
@@ -236,6 +288,7 @@ int main(int argc, char** argv) {
                 selectedSplits.push_back(~split.first);
         }
     }
+    
     std::sort(selectedSplits.begin(), selectedSplits.end(), [](auto& a, auto& b){
         return a.count() < b.count();
     });

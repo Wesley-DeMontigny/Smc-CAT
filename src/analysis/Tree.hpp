@@ -30,6 +30,10 @@ struct TreeNode {
     bool updateTP;
 };
 
+/**
+ * @brief 
+ * 
+ */
 struct NodeHash {
     size_t operator()(const TreeNode* n) const noexcept {
         return std::hash<int>{}(n->id);
@@ -84,10 +88,7 @@ class Tree {
         std::vector<std::string> parseNewickString(const std::string newick) const;
 
         void recursivePostOrderAssign(TreeNode* p);
-boost::dynamic_bitset<> parseAndAccumulate(const std::vector<std::string>& tokens,
-                         double normalizedWeight,
-                         const std::vector<std::string>& taxaNames,
-                         std::unordered_map<boost::dynamic_bitset<>, boost::accumulators::accumulator_set<double, boost::accumulators::stats<boost::accumulators::tag::weighted_mean>, double>>& branchMeans);
+        void parseAndAccumulate(const std::vector<std::string>& tokens, double normalizedWeight, const std::vector<std::string>& taxaNames, std::unordered_map<boost::dynamic_bitset<>, boost::accumulators::accumulator_set<double, boost::accumulators::stats<boost::accumulators::tag::weighted_mean>, double>>& branchMeans) const;
         std::string recursiveNewickGenerate(std::string s, TreeNode* p) const;
         std::string recursiveNewickGenerate(std::string s, TreeNode* p, const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosteriorProbabilities, const std::vector<boost::dynamic_bitset<>>& splitVec) const;
 };

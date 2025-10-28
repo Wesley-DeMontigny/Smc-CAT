@@ -469,7 +469,7 @@ std::string Tree::recursiveNewickGenerate(std::string s, TreeNode* p) const{
     return s;
 }
 
-boost::dynamic_bitset<> Tree::parseAndAccumulate(const std::vector<std::string>& tokens, double normalizedWeight, const std::vector<std::string>& taxaNames, std::unordered_map<boost::dynamic_bitset<>, boost::accumulators::accumulator_set<double, boost::accumulators::stats<boost::accumulators::tag::weighted_mean>, double>>& branchMeans) {
+void Tree::parseAndAccumulate(const std::vector<std::string>& tokens, double normalizedWeight, const std::vector<std::string>& taxaNames, std::unordered_map<boost::dynamic_bitset<>, boost::accumulators::accumulator_set<double, boost::accumulators::stats<boost::accumulators::tag::weighted_mean>, double>>& branchMeans) const {
     int numTaxa = taxaNames.size();
     std::vector<boost::dynamic_bitset<>> stack; // Holds splits as we go down the tree
     boost::dynamic_bitset<> emptySet{0};
@@ -511,7 +511,7 @@ boost::dynamic_bitset<> Tree::parseAndAccumulate(const std::vector<std::string>&
         else if (tok == ";"){
             break;
         }
-        else{ // label or length number
+        else{
             if (readingBranchLength){
                 currentBranchLength= std::atof(tok.c_str());
                 if (haveLast){
@@ -537,8 +537,6 @@ boost::dynamic_bitset<> Tree::parseAndAccumulate(const std::vector<std::string>&
             }
         }
     }
-
-    return emptySet;
 }
 
 std::string Tree::recursiveNewickGenerate(std::string s, TreeNode* p, const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosteriorProbabilities, const std::vector<boost::dynamic_bitset<>>& splitVec) const{
