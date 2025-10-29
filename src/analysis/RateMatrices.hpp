@@ -1,8 +1,9 @@
 #ifndef RATE_MATRICES_HPP
 #include <eigen3/Eigen/Dense>
+#include <vector>
 
 namespace RateMatrices {
-    static const Eigen::Matrix<double, 20, 20> ConstructLG() {
+    static const Eigen::Matrix<double, 20, 20> constructLG() {
         Eigen::Matrix<double, 20, 20> m = Eigen::Matrix<double, 20, 20>::Zero();
         
         m( 0, 0) = 0.0000000; m( 0, 1) = 0.4250930; m( 0, 2) = 0.2768180; m( 0, 3) = 0.3951440; m( 0, 4) = 2.4890840;
@@ -87,6 +88,15 @@ namespace RateMatrices {
         m(19,15) = 0.0983690; m(19,16) = 2.1881580; m(19,17) = 0.1895100; m(19,18) = 0.2493130; m(19,19) = 0.0000000;
 
         return m;
+    }
+
+    static const std::vector<std::pair<int, int>> contructLowerTriangleCoordinates() {
+        std::vector<std::pair<int, int>> coords;
+        coords.reserve(20 * (20 - 1) / 2);
+        for (int i = 1; i < 20; i++)
+            for (int j = 0; j < i; j++)
+                coords.emplace_back(i, j);
+        return coords;
     }
 }
 

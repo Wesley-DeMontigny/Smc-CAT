@@ -13,12 +13,11 @@ class SerializedParticle;
 
 /**
  * @brief 
- * 
  */
 class Particle {
     public:
         Particle(void)=delete;
-        Particle(int seed, Alignment& aln, int nR=1, bool initInvar=false);
+        Particle(int seed, Alignment& aln, int nR=1, bool initInvar=false, bool lg=true);
         
         double branchMove();
         double getPInvar() const { return currentPInvar; }
@@ -27,20 +26,22 @@ class Particle {
         double invarMove();
         double lnLikelihood();
         double lnPrior();
+        double rateMatrixMove();
         double shapeMove();
         double stationaryMove();
         double topologyMove(const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosterior);
         boost::random::mt19937& getRng(){ return rng; }
-        Eigen::Matrix<double, 20, 20> getBaseMatrix() const { return *baseMatrix; }
+        Eigen::Matrix<double, 20, 20> getBaseMatrix() const { return *currentBaseMatrix; }
         int getNumCategories() { return currentTransitionProbabilityClasses.size(); }
         int getNumNodes() const { return numNodes; }
         int getNumRates() const { return numRates; }
-        std::set<boost::dynamic_bitset<>> getSplits() { return currentPhylogeny.getSplits(); }
-        std::string getNewick() { return currentPhylogeny.generateNewick(); }
-        std::string getNewick(const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosteriorProbabilities) { return currentPhylogeny.generateNewick(splitPosteriorProbabilities); }
-        std::vector<double> getRates() { return currentRates; }
-        std::vector<Eigen::Vector<double, 20>> getCategories();
-        std::vector<int> getAssignments();
+        std::set<boost::dynamic_bitset<>> getSplitSet() { return currentPhylogeny.getSplitSet(); }
+        std::unordered_map<boost::dynamic_bitset<>, double> getSplitBranchMap() { return currentPhylogeny.getSplitBranchMap(); }
+        std::string getNewick() const { return currentPhylogeny.generateNewick(); }
+        std::string getNewick(const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosteriorProbabilities) const { return currentPhylogeny.generateNewick(splitPosteriorProbabilities); }
+        std::vector<double> getRates() const { return currentRates; }
+        std::vector<Eigen::Vector<double, 20>> getCategories() const;
+        std::vector<int> getAssignments() const;
         void accept();
         void copy(Particle& p);
         void copyFromSerialized(SerializedParticle& sp);
@@ -55,7 +56,8 @@ class Particle {
         double shapeDelta = 1.0; // Delta to scale the shape of the gamma distribution
         double scaleDelta = 1.0; // Delta to scale an individual branch length
         double subtreeScaleDelta = 1.0; // Delta to scale whole subtrees
-        double stationaryAlpha = 10000.0; // Concentration parameter for dirichlet simplex proposals
+        double stationaryAlpha = 1000.0; // Concentration parameter for dirichlet simplex proposals on the stationary
+        double rateMatrixAlpha = 1000.0; // Concentration parameter the dirichlet simplex proposals on the rate matrix
         double invarAlpha = 100.0; // Concentration parameter for the beta simplex proposals on invar
     private:
         Alignment& aln;
@@ -64,8 +66,10 @@ class Particle {
         bool updateInvar = false;
         bool updateNNI = false;
         bool updateRate = false;
+        bool updateRateMatrix = false;
         bool updateScaleSubtree = false;
         bool updateStationary = false;
+        bool usingLG;
         boost::random::mt19937 rng;
         const int numChar;
         const int numNodes;
@@ -80,7 +84,8 @@ class Particle {
         double oldShape = 1.0;
         std::unique_ptr<double[]> isInvariant;
         std::unique_ptr<double[]> rescaleBuffer; // Contains all the rescale values we computed. Should be size NumNodes x NumSites x 2.
-        std::unique_ptr<Eigen::Matrix<double, 20, 20>> baseMatrix;
+        std::unique_ptr<Eigen::Matrix<double, 20, 20>> currentBaseMatrix;
+        std::unique_ptr<Eigen::Matrix<double, 20, 20>> oldBaseMatrix;
         std::unique_ptr<Eigen::Vector<CL_TYPE, 20>[]> conditionaLikelihoodBuffer; // Contains all the conditional likelihoods for each node (rescaled). Should be size NumSites x NumNodes x 2
         std::unique_ptr<int[]> invariantCharacter;
         std::unique_ptr<uint8_t[]> currentConditionalLikelihoodFlags; // To stop us from having to swap the whole memory space, we just keep a working space flag for each node

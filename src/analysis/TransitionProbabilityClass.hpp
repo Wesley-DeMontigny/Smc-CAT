@@ -24,6 +24,7 @@ struct TransitionProbabilityClass {
     void recomputeEigens();
     void recomputeTransitionProbs(int n, double t, int c, double r);
     double dirichletSimplexMove(boost::random::mt19937& rng, double alpha);
+    double lnPrior();
 
     static Eigen::Vector<double, 20> sampleStationary(boost::random::mt19937& rng, const Eigen::Vector<double, 20>& alpha);
     static double stationarylnPdf(const Eigen::Vector<double, 20>& concentration, const Eigen::Vector<double, 20>& x);

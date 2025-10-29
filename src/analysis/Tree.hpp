@@ -1,8 +1,5 @@
 #ifndef TREE_HPP
 #define TREE_HPP
-#include <boost/accumulators/statistics.hpp>
-#include <boost/accumulators/accumulators.hpp>
-#include <boost/accumulators/statistics/weighted_mean.hpp>
 #include <boost/dynamic_bitset.hpp>
 #include <boost/random/mersenne_twister.hpp>
 #include <string>
@@ -34,33 +31,25 @@ struct TreeNode {
  * @brief 
  * 
  */
-struct NodeHash {
-    size_t operator()(const TreeNode* n) const noexcept {
-        return std::hash<int>{}(n->id);
-    }
-};
-
-/**
- * @brief 
- * 
- */
 class Tree {
     public:
         Tree(void)=delete;
         Tree(boost::random::mt19937& rng, int n); // Generate random tree with n tips
         Tree(std::string s, const std::vector<std::string>& taxaNames); // Generate a tree from newick
         Tree(boost::random::mt19937& rng, const std::vector<std::string>& taxaNames); // Generate a tree from a list of taxa
-        Tree(const std::vector<boost::dynamic_bitset<>>& splits, const std::vector<std::string>& taxaNames);
+        Tree(const std::vector<std::pair<boost::dynamic_bitset<>, double>>& splits, const std::vector<std::string>& taxaNames);
         Tree(const Tree& t); // Deep copy
         Tree& operator=(const Tree& t); // Assignment copy
 
-        void assignMeanBranchLengths(const std::vector<std::string>& newickStrings, const std::vector<double>& normalizedWeights, const std::vector<std::string>& taxaNames);
+        std::unordered_map<int, boost::dynamic_bitset<>> computeSplits() const;
+        std::unordered_map<int, boost::dynamic_bitset<>> getMoveableSplits() const;
+        std::set<boost::dynamic_bitset<>> getSplitSet() const;
+        std::unordered_map<boost::dynamic_bitset<>, double> getSplitBranchMap() const;
+
         std::string generateNewick(const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosteriorProbabilities) const;
         std::string generateNewick() const; // Generates a Newick string for the tree. Assumes the post-order is correct.
         const std::vector<TreeNode*>& getPostOrder() const {return postOrder;}
         const std::vector<TreeNode*>& getTips() const {return tips;}
-        std::set<boost::dynamic_bitset<>> getSplits() const;
-        std::vector<boost::dynamic_bitset<>> getSplitVector() const;
 
         const int getNumNodes() const {return postOrder.size();}
         const int getNumTaxa() const {return tips.size();}
@@ -72,6 +61,8 @@ class Tree {
         double NNIMove(boost::random::mt19937& rng);
 
         void updateAll();
+
+        friend class bitsetGetter;
     private:
         void regeneratePostOrder();
         void clone(const Tree& t);
@@ -83,14 +74,13 @@ class Tree {
         
         TreeNode* addNode(boost::random::mt19937& rng);
         TreeNode* addNode();
-        TreeNode* buildTree(const std::vector<boost::dynamic_bitset<>>& splits, const boost::dynamic_bitset<>& taxa);
+        TreeNode* buildTree(const std::vector<std::pair<boost::dynamic_bitset<>, double>>& splits, const boost::dynamic_bitset<>& taxa);
         int getTaxonIndex(std::string token, const std::vector<std::string>& taxaNames) const;
         std::vector<std::string> parseNewickString(const std::string newick) const;
 
         void recursivePostOrderAssign(TreeNode* p);
-        void parseAndAccumulate(const std::vector<std::string>& tokens, double normalizedWeight, const std::vector<std::string>& taxaNames, std::unordered_map<boost::dynamic_bitset<>, boost::accumulators::accumulator_set<double, boost::accumulators::stats<boost::accumulators::tag::weighted_mean>, double>>& branchMeans) const;
         std::string recursiveNewickGenerate(std::string s, TreeNode* p) const;
-        std::string recursiveNewickGenerate(std::string s, TreeNode* p, const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosteriorProbabilities, const std::vector<boost::dynamic_bitset<>>& splitVec) const;
+        std::string recursiveNewickGenerate(std::string s, TreeNode* p, const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosteriorProbabilities, const std::unordered_map<int, boost::dynamic_bitset<>>& splitMap) const;
 };
 
 #endif

@@ -1,6 +1,5 @@
 #include "Tree.hpp"
 #include <algorithm>
-#include <boost/accumulators/statistics/sum.hpp>
 #include <boost/random/uniform_01.hpp>
 #include <boost/random/exponential_distribution.hpp>
 #include <cassert>
@@ -172,7 +171,7 @@ Tree::Tree(boost::random::mt19937& rng, const std::vector<std::string>& taxaName
     }
 }
 
-Tree::Tree(const std::vector<boost::dynamic_bitset<>>& splits, const std::vector<std::string>& taxaNames) {
+Tree::Tree(const std::vector<std::pair<boost::dynamic_bitset<>, double>>& splits, const std::vector<std::string>& taxaNames) {
 
     for(int i = 0; i < taxaNames.size(); i++){
         auto newTip = addNode();
@@ -283,67 +282,21 @@ void Tree::clone(const Tree& t){
     }
 }
 
-void Tree::assignMeanBranchLengths(const std::vector<std::string>& newickStrings, const std::vector<double>& normalizedWeights, const std::vector<std::string>& taxaNames){
-    using Acc = boost::accumulators::accumulator_set<
-        double, 
-        boost::accumulators::stats<boost::accumulators::tag::weighted_mean>, 
-        double
-    >;
-
-    std::unordered_map<boost::dynamic_bitset<>, Acc> branchMeans{};
-    std::unordered_map<TreeNode*, boost::dynamic_bitset<>, NodeHash> splitMap;
-    boost::dynamic_bitset<> zeroSet = boost::dynamic_bitset<>{tips.size()};
-
-    for(int i = 0; i < tips.size(); i++){
-        boost::dynamic_bitset<> tipSet(zeroSet);
-        tipSet[i] = 1;
-        splitMap[nodes[i].get()] = tipSet;
-    }
-
-    for(TreeNode* n : postOrder){
-        if(!n->isTip && !n->isRoot){
-            boost::dynamic_bitset<> newSet(zeroSet);
-            for(TreeNode* d : n->descendants){
-                boost::dynamic_bitset<> descSet = splitMap[d];
-                for(int i = 0; i < tips.size(); i++){
-                    if(descSet[i] == 1){
-                        newSet[i] = 1;
-                    }
-                }
-            }
-            splitMap[n] = newSet;
-        }
-    }
-
-    for(const auto& s : splitMap) {
-        branchMeans.emplace(s.second, Acc{});
-    }
-
-    for(int i = 0; i < newickStrings.size(); i++){
-        std::vector<std::string> tokens = parseNewickString(newickStrings[i]);
-        parseAndAccumulate(tokens, normalizedWeights[i], taxaNames, branchMeans);
-    }
-
-    for(auto& pair : splitMap){
-        pair.first->branchLength = boost::accumulators::weighted_mean(branchMeans[pair.second]);
-    }
-}
-
-TreeNode* Tree::buildTree(const std::vector<boost::dynamic_bitset<>>& splits, const boost::dynamic_bitset<>& taxa){
+TreeNode* Tree::buildTree(const std::vector<std::pair<boost::dynamic_bitset<>, double>>& splits, const boost::dynamic_bitset<>& taxa){
     size_t taxaSize = taxa.count();
-    if(taxaSize > 2){
+    if(taxaSize > 1){
         auto newNode = addNode();
 
-        std::vector<boost::dynamic_bitset<>> relevant;
+        std::vector<std::pair<boost::dynamic_bitset<>, double>> relevant;
         relevant.reserve(splits.size());
         for (const auto& s : splits) {
-            if ((s & taxa).any() && ((~s) & taxa).any())
+            if ((s.first & taxa).any() && ((~s.first) & taxa).any())
                 relevant.push_back(s);
         }
 
         auto& s = relevant.front();
-        boost::dynamic_bitset<> left  = s & taxa;
-        boost::dynamic_bitset<> right = (~s) & taxa;
+        boost::dynamic_bitset<> left  = s.first & taxa;
+        boost::dynamic_bitset<> right = (~s.first) & taxa;
 
         auto leftNode = buildTree(relevant, left);
         auto rightNode = buildTree(relevant, right);
@@ -351,16 +304,32 @@ TreeNode* Tree::buildTree(const std::vector<boost::dynamic_bitset<>>& splits, co
         rightNode->ancestor = newNode;
         newNode->descendants.insert(leftNode);
         newNode->descendants.insert(rightNode);
+        if(taxa.all()){ // We are at the root and need to split the branch length (the Pulley Principle)
+            leftNode->branchLength = s.second / 2.0;
+            rightNode->branchLength = s.second / 2.0;
+        }
+        else{
+            bool setRight = false;
+            bool setLeft = false;
+            boost::dynamic_bitset<> rightSearch{right};
+            boost::dynamic_bitset<> leftSearch{left};
 
-        return newNode;
-    }
-    else if(taxaSize == 2){
-        auto newNode = addNode();
+            // Canonicalize bitset
+            if(!rightSearch.test(0))
+                rightSearch.flip();
+            if(!leftSearch.test(0))
+                leftSearch.flip();
 
-        for(int i = 0; i < taxa.size(); i++){
-            if(taxa[i] == 1){
-                tips[i]->ancestor = newNode;
-                newNode->descendants.insert(tips[i]);
+            for(const auto& [splitBits, length] : relevant) {
+                if(!setLeft && splitBits == leftSearch) {
+                    leftNode->branchLength = length;
+                    setLeft = true;
+                }
+                if(!setRight && splitBits == rightSearch) {
+                    rightNode->branchLength = length;
+                    setRight = true;
+                }
+                if(setLeft && setRight) break;
             }
         }
 
@@ -437,11 +406,9 @@ std::string Tree::generateNewick() const {
 }
 
 std::string Tree::generateNewick(const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosteriorProbabilities) const{
-    std::vector<boost::dynamic_bitset<>> splits = getSplitVector();
-
     std::string output = "";
 
-    output = recursiveNewickGenerate(output, root, splitPosteriorProbabilities, splits);
+    output = recursiveNewickGenerate(output, root, splitPosteriorProbabilities, computeSplits());
 
     output += ";";
 
@@ -469,88 +436,19 @@ std::string Tree::recursiveNewickGenerate(std::string s, TreeNode* p) const{
     return s;
 }
 
-void Tree::parseAndAccumulate(const std::vector<std::string>& tokens, double normalizedWeight, const std::vector<std::string>& taxaNames, std::unordered_map<boost::dynamic_bitset<>, boost::accumulators::accumulator_set<double, boost::accumulators::stats<boost::accumulators::tag::weighted_mean>, double>>& branchMeans) const {
-    int numTaxa = taxaNames.size();
-    std::vector<boost::dynamic_bitset<>> stack; // Holds splits as we go down the tree
-    boost::dynamic_bitset<> emptySet{0};
-
-    boost::dynamic_bitset<> lastCompletedSubtree;
-    bool haveLast = false;
-
-    bool readingBranchLength = false;
-    double currentBranchLength = 0.0;
-
-    for (int i = 0; i < tokens.size(); i++){
-        const std::string& tok = tokens[i];
-
-        if (tok == "("){
-            stack.push_back(emptySet);
-        }
-        else if (tok == ")"){
-            boost::dynamic_bitset<> clade(numTaxa);
-
-            while (!stack.empty() && stack.back().size() != 0){
-                clade |= stack.back();
-                stack.pop_back();
-            
-            }
-            if (stack.empty()) throw std::runtime_error("Unbalanced tree!");
-
-            stack.pop_back();
-
-            lastCompletedSubtree = clade;
-            haveLast = true;
-            stack.push_back(clade);
-        }
-        else if (tok == ","){
-            continue;
-        }
-        else if (tok == ":"){
-            readingBranchLength = true;
-        }
-        else if (tok == ";"){
-            break;
-        }
-        else{
-            if (readingBranchLength){
-                currentBranchLength= std::atof(tok.c_str());
-                if (haveLast){
-                    auto key = lastCompletedSubtree;
-                    auto complement = ~key;
-
-                    if(branchMeans.count(key) > 0){
-                        branchMeans[key](currentBranchLength, boost::accumulators::weight = normalizedWeight);
-                    }
-                    else if(branchMeans.count(complement) > 0){
-                        branchMeans[complement](currentBranchLength, boost::accumulators::weight = normalizedWeight);
-                    }
-                }
-                readingBranchLength = false;
-            } 
-            else{
-                int tipIndex = getTaxonIndex(tok, taxaNames);
-                boost::dynamic_bitset<> leaf(numTaxa);
-                leaf.set(tipIndex);
-                stack.push_back(std::move(leaf));
-                lastCompletedSubtree = stack.back();
-                haveLast = true;
-            }
-        }
-    }
-}
-
-std::string Tree::recursiveNewickGenerate(std::string s, TreeNode* p, const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosteriorProbabilities, const std::vector<boost::dynamic_bitset<>>& splitVec) const{
+std::string Tree::recursiveNewickGenerate(std::string s, TreeNode* p, const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosteriorProbabilities, const std::unordered_map<int, boost::dynamic_bitset<>>& splitMap) const{
     if(! p->isTip){
         s += "(";
         for(auto child : p->descendants) {
-            s = recursiveNewickGenerate(s, child, splitPosteriorProbabilities, splitVec);
+            s = recursiveNewickGenerate(s, child, splitPosteriorProbabilities, splitMap);
             s += ",";
         }
         s.pop_back();
         s += ")";
 
         if(p != root){
-            s += std::to_string(splitPosteriorProbabilities.at(splitVec.at(p->id - tips.size() - 1)));
+            auto& split = splitMap.at(p->id);
+            s += std::to_string(splitPosteriorProbabilities.at(split));
             s += ":" + std::to_string(p->branchLength);
         }
     }
@@ -584,78 +482,72 @@ void Tree::updateAll(){
     }
 }
 
-std::set<boost::dynamic_bitset<>> Tree::getSplits() const{
-    std::set<boost::dynamic_bitset<>> splits;
-    std::unordered_map<TreeNode*, boost::dynamic_bitset<>, NodeHash> splitMap;
-    boost::dynamic_bitset<> zeroSet = boost::dynamic_bitset<>{tips.size()};
+std::unordered_map<int, boost::dynamic_bitset<>> Tree::computeSplits() const {
+    std::unordered_map<int, boost::dynamic_bitset<>> splits;
+    boost::dynamic_bitset<> zeroSet = boost::dynamic_bitset<>{tips.size()}; 
 
-    for(int i = 0; i < tips.size(); i++){
-        boost::dynamic_bitset<> tipSet(zeroSet);
-        tipSet[i] = 1;
-        splitMap[nodes[i].get()] = tipSet;
-    }
+    for(int i = 0; i < tips.size(); i++){ 
+        boost::dynamic_bitset<> tipSet(zeroSet); 
+        tipSet[i] = 1; 
+        splits.emplace(nodes[i]->id, tipSet);
+    } 
 
-    for(TreeNode* n : postOrder){
-        if(!n->isTip && !n->isRoot){
-            boost::dynamic_bitset<> newSet(zeroSet);
-            for(TreeNode* d : n->descendants){
-                boost::dynamic_bitset<> descSet = splitMap[d];
-                for(int i = 0; i < tips.size(); i++){
-                    if(descSet[i] == 1){
-                        newSet[i] = 1;
-                    }
-                }
-            }
 
-            boost::dynamic_bitset<> complement(newSet);
-            complement.flip();
-            if(complement < newSet)
-                splits.insert(complement);
-            else
-                splits.insert(newSet);
-            
-            splitMap[n] = newSet;
-        }
+    for(TreeNode* n : postOrder){ 
+        if(!n->isRoot){ 
+            boost::dynamic_bitset<> newSet(zeroSet); 
+            for(TreeNode* d : n->descendants){ 
+                boost::dynamic_bitset<> descSet = splits[d->id]; 
+                for(int i = 0; i < tips.size(); i++){ 
+                    if(descSet.test(i)){ 
+                        newSet[i] = 1; 
+                    } 
+                } 
+            } 
+            splits.emplace(n->id, newSet); 
+        } 
+    } 
+    
+    // Canonicalize bitset 
+    for(auto& [_, s] : splits){ 
+        if(!s.test(0)){ 
+            s.flip(); 
+        } 
     }
 
     return splits;
 }
 
-std::vector<boost::dynamic_bitset<>> Tree::getSplitVector() const {
-    std::vector<boost::dynamic_bitset<>> splits(nodes.size() - tips.size() - 1, boost::dynamic_bitset{tips.size()});
-    std::unordered_map<TreeNode*, boost::dynamic_bitset<>, NodeHash> splitMap;
-    boost::dynamic_bitset<> zeroSet = boost::dynamic_bitset<>{tips.size()};
-
-    for(int i = 0; i < tips.size(); i++){
-        boost::dynamic_bitset<> tipSet(zeroSet);
-        tipSet[i] = 1;
-        splitMap[nodes[i].get()] = tipSet;
+std::unordered_map<int, boost::dynamic_bitset<>> Tree::getMoveableSplits() const {
+    auto splits = computeSplits();
+    for(auto it = splits.begin(); it != splits.end();){
+        const auto& s = it->second;
+        if(s.count() == 1 || (~s).count() == 1)
+            it = splits.erase(it);
+        else
+            ++it;
     }
-
-    for(TreeNode* n : postOrder){
-        if(!n->isTip && !n->isRoot){
-            boost::dynamic_bitset<> newSet(zeroSet);
-            for(TreeNode* d : n->descendants){
-                boost::dynamic_bitset<> descSet = splitMap[d];
-                for(int i = 0; i < tips.size(); i++){
-                    if(descSet[i] == 1){
-                        newSet[i] = 1;
-                    }
-                }
-            }
-
-            boost::dynamic_bitset complement(newSet);
-            complement.flip();
-            if(complement < newSet)
-                splits[n->id - tips.size() - 1] = complement;
-            else
-                splits[n->id - tips.size() - 1] = newSet;
-
-            splitMap[n] = newSet;
-        }
-    }
-
     return splits;
+}
+
+std::set<boost::dynamic_bitset<>> Tree::getSplitSet() const {
+    auto splits = computeSplits();
+    std::set<boost::dynamic_bitset<>> cladeSet;
+    for(auto& [_, s] : splits)
+        cladeSet.insert(s);
+    return cladeSet;
+}
+
+std::unordered_map<boost::dynamic_bitset<>, double> Tree::getSplitBranchMap() const {
+    auto splits = computeSplits();
+    std::unordered_map<boost::dynamic_bitset<>, double> branchMap;
+
+    for(const auto& [id, s] : splits){
+        double len = nodes[id]->branchLength;
+        branchMap[s] += len;
+    }
+
+    return branchMap;
 }
 
 double Tree::scaleBranchMove(boost::random::mt19937& rng, double delta){
@@ -780,25 +672,23 @@ double Tree::NNIMove(boost::random::mt19937& rng){
 // Biased interior node selection using the posterior probability of the split that node creates. Inspired by X Meyer 2021
 double Tree::adaptiveNNIMove(boost::random::mt19937& rng, double epsilon, const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosterior){
     boost::random::uniform_01<double> unif{};
-
     
-    std::vector<boost::dynamic_bitset<>> currentSplits = getSplitVector();
-    std::vector<double> nodeProbs(currentSplits.size(), 0.0);
+    std::unordered_map<int, boost::dynamic_bitset<>> currentSplits = getMoveableSplits();
+    std::unordered_map<int, double> nodeProbs;
 
     double total = 0.0;
     for(TreeNode* n : postOrder){
         if(!n->isRoot && !n->isTip){
-            int internalID = n->id - tips.size() - 1;
             total += epsilon;
-            nodeProbs[internalID] = epsilon;
-            if(splitPosterior.contains(currentSplits[internalID])){
-                double posteriorContribution = std::clamp(1.0 - splitPosterior.at(currentSplits[internalID]), 0.0, 1.0);
-                nodeProbs[internalID] += posteriorContribution;
+            nodeProbs[n->id] = epsilon;
+            if(splitPosterior.contains(currentSplits[n->id])){
+                double posteriorContribution = 1.0 - splitPosterior.at(currentSplits[n->id]);
+                nodeProbs[n->id] += posteriorContribution;
                 total += posteriorContribution;
             }
             else {
                 total += 1.0;
-                nodeProbs[internalID] += 1.0;
+                nodeProbs[n->id] += 1.0;
             }
         }
     }
@@ -807,12 +697,12 @@ double Tree::adaptiveNNIMove(boost::random::mt19937& rng, double epsilon, const 
     double cumulativeSum = 0.0;
     double selectedProb = 0.0;
     int nodeID = 0;
-    for(int i = 0; i < nodeProbs.size(); i++){
-        double prob = nodeProbs[i]/total;
+    for(const auto& [index, probs] : nodeProbs){
+        double prob = nodeProbs[index]/total;
         cumulativeSum += prob;
         if(randomNode <= cumulativeSum){
             selectedProb = prob;
-            nodeID = i + tips.size() + 1; // Remember that we are only considering the interior
+            nodeID = index;
             break;
         }
     }
@@ -853,25 +743,24 @@ double Tree::adaptiveNNIMove(boost::random::mt19937& rng, double epsilon, const 
     regeneratePostOrder();
 
     // Refresh the current splits and probabilities to compute the hastings ratio
-    currentSplits = getSplitVector();
+    currentSplits = getMoveableSplits();
     total = 0.0;
     for(TreeNode* n : postOrder){
         if(!n->isRoot && !n->isTip){
-            int internalID = n->id - tips.size() - 1;
             total += epsilon;
-            nodeProbs[internalID] = epsilon;
-            if(splitPosterior.contains(currentSplits[internalID])){
-                double posteriorContribution = std::clamp(1.0 - splitPosterior.at(currentSplits[internalID]), 0.0, 1.0);
-                nodeProbs[internalID] += posteriorContribution;
+            nodeProbs[n->id] = epsilon;
+            if(splitPosterior.contains(currentSplits[n->id])){
+                double posteriorContribution = 1.0 - splitPosterior.at(currentSplits[n->id]);
+                nodeProbs[n->id] += posteriorContribution;
                 total += posteriorContribution;
             }
             else {
                 total += 1.0;
-                nodeProbs[internalID] += 1.0;
+                nodeProbs[n->id] += 1.0;
             }
         }
     }
-    double revProb = nodeProbs[nodeID - tips.size() - 1] / total;
+    double revProb = nodeProbs[nodeID] / total;
 
     return std::log(revProb) - std::log(selectedProb);
 }

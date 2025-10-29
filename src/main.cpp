@@ -1,3 +1,6 @@
+#include <boost/accumulators/statistics.hpp>
+#include <boost/accumulators/accumulators.hpp>
+#include <boost/accumulators/statistics/weighted_mean.hpp>
 #include <boost/dynamic_bitset.hpp>
 #include <boost/random/mersenne_twister.hpp>
 #include <boost/random/uniform_01.hpp>
@@ -15,7 +18,7 @@
 
 void computeNextStep(std::vector<double>& rawWeights, std::vector<double>& rawLogLikelihoods, 
                      std::vector<double>& normalizedWeights, double& ESS,
-                     double& currentTemp, const double& lastTemp, const int& numParticles) {
+                     double& currentTemp, const double& lastTemp, const int& numParticles){
     double targetESS = 0.6 * numParticles;
     double low = lastTemp;
     double high = 1.0;
@@ -79,12 +82,13 @@ void computeNextStep(std::vector<double>& rawWeights, std::vector<double>& rawLo
     ESS = 1.0 / sumSq;
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char** argv){
     int numParticles = 500;
     int rejuvinationIterations = 10;
     int numThreads = omp_get_max_threads();
     omp_set_num_threads(numThreads);
     bool invar = false;
+    bool lg = false;
     int numRates = 1;
 
     boost::random::mt19937 rng{1};
@@ -96,6 +100,7 @@ int main(int argc, char** argv) {
 
     std::unordered_map<boost::dynamic_bitset<>, double> splitPosteriorProbabilities;
     std::vector<std::set<boost::dynamic_bitset<>>> particleSplits;
+
     particleSplits.reserve(numParticles);
     for(int i = 0; i < numParticles; i++){
         particleSplits.push_back({});
@@ -161,6 +166,17 @@ int main(int argc, char** argv) {
             }
         });
     }
+    if(!lg){
+        mcmc.emplaceMove(std::tuple{
+            1.0,
+            [](Particle& m){
+                return 3;
+            },
+            [](Particle& m){
+                return m.rateMatrixMove();
+            }
+        });
+    }
     mcmc.initMoveProbs();
 
 
@@ -170,7 +186,7 @@ int main(int argc, char** argv) {
 
     particles.reserve(numThreads);
     for (int t = 0; t < numThreads; t++) {
-        particles.emplace_back(t, aln, numRates, invar);
+        particles.emplace_back(t, aln, numRates, invar, lg);
     }
 
     // Particle initialization
@@ -182,7 +198,7 @@ int main(int argc, char** argv) {
             initP.getNewick(), initP.getAssignments(), initP.getCategories(),
             initP.getBaseMatrix(), initP.getPInvar(), initP.getShape()
         );
-        particleSplits[n] = initP.getSplits();
+        particleSplits[n] = initP.getSplitSet();
         initP.initialize(invar);
     }
     oldSerializedParticles = currentSerializedParticles;
@@ -252,7 +268,7 @@ int main(int argc, char** argv) {
                 rawWeights[n] = -1.0 * std::log(numParticles);
                 p.writeToSerialized(oldSerializedParticles[n]);
 
-                particleSplits[n] = p.getSplits();
+                particleSplits[n] = p.getSplitSet();
             }
             std::swap(currentSerializedParticles, oldSerializedParticles);
         }
@@ -269,6 +285,7 @@ int main(int argc, char** argv) {
         return a.second > b.second;
     });
 
+    // Greedily select the best splits until we have a resolved tree.
     std::vector<boost::dynamic_bitset<>> selectedSplits;
     for(auto& split : sortedSplits){
         bool compatible = true;
@@ -281,25 +298,44 @@ int main(int argc, char** argv) {
                 break;
             }
         }
-        if(compatible){ // Anchor splits in orientation before pushing
-            if (split.first.test(0))
-                selectedSplits.push_back(split.first);
-            else
-                selectedSplits.push_back(~split.first);
+        if(compatible){
+            selectedSplits.push_back(split.first);
         }
     }
-    
+    // Sort these in terms of size of the split so that it can be in the correct order for the build algorithm
     std::sort(selectedSplits.begin(), selectedSplits.end(), [](auto& a, auto& b){
         return a.count() < b.count();
     });
 
-    auto consensusTree = Tree(selectedSplits, aln.getTaxaNames());
-    std::vector<std::string> newickStrings;
-    for(auto& particle : currentSerializedParticles){
-        newickStrings.push_back(particle.newick);
+    // Accumulate weighted conditional mean for branch length splits
+    using Acc = boost::accumulators::accumulator_set<
+        double,
+        boost::accumulators::stats<boost::accumulators::tag::weighted_mean>,
+        double
+    >;
+    std::unordered_map<boost::dynamic_bitset<>, Acc> branchWeightedMeans{};
+    for(auto& s : selectedSplits){
+        branchWeightedMeans.emplace(s, Acc{});
     }
-    consensusTree.assignMeanBranchLengths(newickStrings, normalizedWeights, aln.getTaxaNames());
+    for (int n = 0; n < numParticles; n++) {
+        Particle& p = particles[0];
+        p.copyFromSerialized(currentSerializedParticles[n]);
+        std::unordered_map<boost::dynamic_bitset<>, double> sbMap = p.getSplitBranchMap();
+        for(const auto& [split, bL] : sbMap){
+            if(branchWeightedMeans.contains(split)){
+                branchWeightedMeans.at(split)(bL, boost::accumulators::weight = normalizedWeights[n]);
+            }
+        }
+    }
+    // Construct inputs
+    std::vector<std::pair<boost::dynamic_bitset<>, double>> buildInputs;
+    buildInputs.reserve(selectedSplits.size());
+    for(auto& s : selectedSplits){
+        double weightedMean = boost::accumulators::weighted_mean(branchWeightedMeans.at(s));
+        buildInputs.emplace_back(std::move(s), weightedMean); // Consume selected splits in the process
+    }
 
+    Tree consensusTree(buildInputs, aln.getTaxaNames());
     std::cout << consensusTree.generateNewick(splitPosteriorProbabilities) << std::endl;
 
     // Get mean branch lengths
