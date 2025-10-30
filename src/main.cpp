@@ -1,20 +1,20 @@
-#include <boost/accumulators/statistics.hpp>
+#include "analysis/Mcmc.hpp"
+#include "analysis/Particle.hpp"
+#include "analysis/RateMatrices.hpp"
+#include "analysis/SerializedParticle.hpp"
+#include "core/Alignment.hpp"
+#include "core/Settings.hpp"
 #include <boost/accumulators/accumulators.hpp>
+#include <boost/accumulators/statistics.hpp>
 #include <boost/accumulators/statistics/weighted_mean.hpp>
 #include <boost/dynamic_bitset.hpp>
 #include <boost/random/mersenne_twister.hpp>
 #include <boost/random/uniform_01.hpp>
-#include <iostream>
-#include <iomanip>
 #include <chrono>
+#include <iomanip>
+#include <iostream>
 #include <omp.h>
 #include <unordered_map>
-#include "core/Settings.hpp"
-#include "analysis/SerializedParticle.hpp"
-#include "analysis/RateMatrices.hpp"
-#include "analysis/Particle.hpp"
-#include "core/Alignment.hpp"
-#include "analysis/Mcmc.hpp"
 
 void computeNextStep(std::vector<double>& rawWeights, std::vector<double>& rawLogLikelihoods, 
                      std::vector<double>& normalizedWeights, double& ESS,
@@ -23,24 +23,24 @@ void computeNextStep(std::vector<double>& rawWeights, std::vector<double>& rawLo
     double low = lastTemp;
     double high = 1.0;
 
-    auto computeESS = [&](double temp) {
+    auto computeESS = [&](double temp){
         std::vector<double> tempWeights(numParticles);
         double total = 0.0;
 
-        for (int n = 0; n < numParticles; n++) {
+        for(int n = 0; n < numParticles; n++){
             tempWeights[n] = rawWeights[n] + (temp - lastTemp) * rawLogLikelihoods[n];
         }
 
         double maxW = *std::max_element(tempWeights.begin(), tempWeights.end());
 
         std::vector<double> expWeights(numParticles);
-        for (int n = 0; n < numParticles; n++) {
+        for(int n = 0; n < numParticles; n++){
             expWeights[n] = std::exp(tempWeights[n] - maxW);
             total += expWeights[n];
         }
 
         double sumSq = 0.0;
-        for (int n = 0; n < numParticles; n++) {
+        for(int n = 0; n < numParticles; n++){
             expWeights[n] /= total;
             sumSq += expWeights[n] * expWeights[n];
         }
@@ -49,32 +49,33 @@ void computeNextStep(std::vector<double>& rawWeights, std::vector<double>& rawLo
     };
 
     // Binary search for temperature
-    while (high - low > 1e-5) {
+    while(high - low > 1e-5){
         double mid = 0.5 * (low + high);
         double midESS = computeESS(mid);
 
-        if (midESS > targetESS) {
+        if(midESS > targetESS){
             low = mid;   // We can still increase temperature
-        } else {
+        } 
+        else{
             high = mid;  // Too much degeneracy
         }
     }
 
     currentTemp = high;
 
-    for (int n = 0; n < numParticles; n++) {
+    for (int n = 0; n < numParticles; n++){
         rawWeights[n] = rawWeights[n] + (currentTemp - lastTemp) * rawLogLikelihoods[n];
     }
 
     double maxW = *std::max_element(rawWeights.begin(), rawWeights.end());
     double total = 0.0;
-    for (int n = 0; n < numParticles; n++) {
+    for (int n = 0; n < numParticles; n++){
         normalizedWeights[n] = std::exp(rawWeights[n] - maxW);
         total += normalizedWeights[n];
     }
 
     double sumSq = 0.0;
-    for (int n = 0; n < numParticles; n++) {
+    for (int n = 0; n < numParticles; n++){
         normalizedWeights[n] /= total;
         sumSq += normalizedWeights[n] * normalizedWeights[n];
     }
@@ -82,14 +83,32 @@ void computeNextStep(std::vector<double>& rawWeights, std::vector<double>& rawLo
     ESS = 1.0 / sumSq;
 }
 
+void computeSplitPosteriors(std::unordered_map<boost::dynamic_bitset<>, double>& splitPosteriorProbabilities, 
+                            const std::vector<double>& normalizedWeights,
+                            const std::vector<std::set<boost::dynamic_bitset<>>>& particleSplits,
+                            const int& numParticles){
+    splitPosteriorProbabilities.clear();
+    for(int n = 0; n < numParticles; n++){
+        for(boost::dynamic_bitset<> split : particleSplits[n]){
+            if (splitPosteriorProbabilities.count(split)) {
+                splitPosteriorProbabilities[split] += normalizedWeights[n];
+            }
+            else {
+                splitPosteriorProbabilities[split] = normalizedWeights[n];
+            }
+        }
+    }
+}
+
 int main(int argc, char** argv){
     int numParticles = 500;
     int rejuvinationIterations = 10;
     int numThreads = omp_get_max_threads();
     omp_set_num_threads(numThreads);
-    bool invar = false;
+    bool invar = true;
     bool lg = false;
-    int numRates = 1;
+    double alg8Probability = 0.05;
+    int numRates = 2;
 
     boost::random::mt19937 rng{1};
     boost::random::uniform_01<double> unif{};
@@ -98,7 +117,6 @@ int main(int argc, char** argv){
     std::vector<double> rawWeights(numParticles, -1.0 * std::log(numParticles));
     std::vector<double> normalizedWeights(numParticles, 0.0);
 
-    std::unordered_map<boost::dynamic_bitset<>, double> splitPosteriorProbabilities;
     std::vector<std::set<boost::dynamic_bitset<>>> particleSplits;
 
     particleSplits.reserve(numParticles);
@@ -113,6 +131,8 @@ int main(int argc, char** argv){
 
     Alignment aln("/workspaces/FastCAT/local_testing/globin_aa_aligned.fasta");
     int numChar = aln.getNumChar();
+
+    std::unordered_map<boost::dynamic_bitset<>, double> splitPosteriorProbabilities;
 
     std::cout << "Utilizing " << numThreads << " threads for working with " << numParticles << std::endl;
 
@@ -148,7 +168,7 @@ int main(int argc, char** argv){
         mcmc.emplaceMove(std::tuple{
             1.0,
             [](Particle& m){
-                return 3;
+                return 5;
             },
             [](Particle& m){
                 return m.shapeMove();
@@ -159,7 +179,7 @@ int main(int argc, char** argv){
         mcmc.emplaceMove(std::tuple{
             1.0,
             [](Particle& m){
-                return 3;
+                return 5;
             },
             [](Particle& m){
                 return m.invarMove();
@@ -170,7 +190,7 @@ int main(int argc, char** argv){
         mcmc.emplaceMove(std::tuple{
             1.0,
             [](Particle& m){
-                return 3;
+                return 10;
             },
             [](Particle& m){
                 return m.rateMatrixMove();
@@ -207,25 +227,19 @@ int main(int argc, char** argv){
     // SMC algorithm
     std::cout << "Starting SMC..." << std::endl;
     double lastTemp = 0.0;
-    for(int i = 1; lastTemp < 1.0; i++){
+    for(int iteration = 1; lastTemp < 1.0; iteration++){
         double currentTemp = lastTemp;
         double ESS = 0.0;
         computeNextStep(rawWeights, rawLogLikelihoods, normalizedWeights, ESS, currentTemp, lastTemp, numParticles);
 
-        // Generate split posterior probabilities
-        splitPosteriorProbabilities.clear();
-        for(int n = 0; n < numParticles; n++){
-            for(boost::dynamic_bitset<> split : particleSplits[n]){
-                if (splitPosteriorProbabilities.count(split)) {
-                    splitPosteriorProbabilities[split] += normalizedWeights[n];
-                }
-                else {
-                    splitPosteriorProbabilities[split] = normalizedWeights[n];
-                }
-            }
-        }
+        std::cout << iteration << "\tTemp: " << currentTemp << "\tESS: " << ESS << std::endl;
 
-        std::cout << i << "\tTemp: " << currentTemp << "\tESS: " << ESS << std::endl;
+        computeSplitPosteriors(
+            splitPosteriorProbabilities,
+            normalizedWeights,
+            particleSplits,
+            numParticles
+        );
 
         if(ESS <= 0.6 * numParticles && currentTemp != 1.0){
             std::cout << "Resampling Particles..." << std::endl;
@@ -239,17 +253,18 @@ int main(int argc, char** argv){
             int k = 0;
             double ruler = u;
             double step = 1.0 / numParticles;
-            while (static_cast<int>(assignments.size()) < numParticles) {
-                if (ruler <= cumulative) {
+            while(static_cast<int>(assignments.size()) < numParticles){
+                if(ruler <= cumulative){
                     assignments.push_back(k);
                     ruler += step;
                 } 
-                else {
+                else{
                     if (++k >= numParticles) { k = numParticles - 1; cumulative = 1.0; }
                     else cumulative += normalizedWeights[k];
                 }
             }
 
+            // Mutate particles after resampling
             std::cout << "Rejuvenating Particles..." << std::endl;
             #pragma omp parallel for schedule(dynamic)
             for (int n = 0; n < numParticles; n++) {
@@ -259,13 +274,12 @@ int main(int argc, char** argv){
                 p.copyFromSerialized(currentSerializedParticles[particleID]);
 
                 mcmc.run(p, rejuvinationIterations, currentTemp);
-
-                if(unif(rng) < 0.1){
+                if(unif(rng) < alg8Probability){ // Update the CRP only for a fraction of particles
                     p.gibbsPartitionMove(currentTemp);
                     p.refreshLikelihood(true);
                 }
                 rawLogLikelihoods[n] = p.lnLikelihood();
-                rawWeights[n] = -1.0 * std::log(numParticles);
+                rawWeights[n] = -1.0 * std::log(numParticles); // Technically this happens during resampling, but our MCMC kernel is invariant, so theres no difference
                 p.writeToSerialized(oldSerializedParticles[n]);
 
                 particleSplits[n] = p.getSplitSet();
@@ -349,4 +363,5 @@ int main(int argc, char** argv){
     std::cout << "The analysis completed in " << std::chrono::duration_cast<std::chrono::minutes>(postAnalysis - preAnalysis).count() << "[minutes]" << std::endl;
     
     return 0;
+
 }

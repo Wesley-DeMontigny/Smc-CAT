@@ -22,34 +22,6 @@ Particle::Particle(int seed, Alignment& aln, int nR, bool initInvar, bool lg) :
                        rng(seed), numChar(aln.getNumChar()), currentPhylogeny(rng, aln.getTaxaNames()), aln(aln), numRates(nR),
                        oldPhylogeny(currentPhylogeny), numNodes(aln.getNumTaxa() * 2 - 1), numTaxa(aln.getNumTaxa()), usingLG(lg) {
 
-    if(usingLG){
-        currentBaseMatrix = std::unique_ptr<Eigen::Matrix<double, 20, 20>>(new Eigen::Matrix<double, 20, 20>{RateMatrices::constructLG()});
-        oldBaseMatrix = std::unique_ptr<Eigen::Matrix<double, 20, 20>>(new Eigen::Matrix<double, 20, 20>{*currentBaseMatrix});
-    }
-    else {
-        currentBaseMatrix = std::unique_ptr<Eigen::Matrix<double, 20, 20>>(new Eigen::Matrix<double, 20, 20>{});
-        currentBaseMatrix->setZero();
-
-        auto gammaDist = boost::random::gamma_distribution(2.0, 1.0);
-
-        double total = 0.0;
-        for (int i = 1; i < 20; i++){
-            for (int j = 0; j < i; j++){
-                double newEntry = gammaDist(rng);
-                total += newEntry;
-                (*currentBaseMatrix)(i,j) = newEntry;
-            }
-        }
-        for (int i = 1; i < 20; i++){
-            for (int j = 0; j < i; j++){
-                (*currentBaseMatrix)(i,j) /= total;
-                (*currentBaseMatrix)(j,i) = (*currentBaseMatrix)(i,j);
-            }
-        }
-
-        oldBaseMatrix = std::unique_ptr<Eigen::Matrix<double, 20, 20>>(new Eigen::Matrix<double, 20, 20>{*currentBaseMatrix});
-    }
-    
     // Reserve the spots for the rates. In initialization we can do gamma site rate heterogeneity if the numRates > 1
     currentRates.reserve(numRates);
     for (int r = 0; r < numRates; r++) {
@@ -104,7 +76,33 @@ Particle::Particle(int seed, Alignment& aln, int nR, bool initInvar, bool lg) :
 }
 
 void Particle::initialize(bool initInvar){
-    // We waste a little bit of compute the first time we initilize this particle object, but this is easiest right now
+    // Construct rate matrix
+    if(usingLG){
+        currentBaseMatrix = std::unique_ptr<Eigen::Matrix<double, 20, 20>>(new Eigen::Matrix<double, 20, 20>{RateMatrices::constructLG()});
+        oldBaseMatrix = std::unique_ptr<Eigen::Matrix<double, 20, 20>>(new Eigen::Matrix<double, 20, 20>{*currentBaseMatrix});
+    }
+    else {
+        currentBaseMatrix = std::unique_ptr<Eigen::Matrix<double, 20, 20>>(new Eigen::Matrix<double, 20, 20>{});
+        currentBaseMatrix->setZero();
+
+        auto gammaDist = boost::random::gamma_distribution(2.0, 1.0);
+        auto coords = RateMatrices::contructLowerTriangleCoordinates();
+
+        double total = 0.0;
+        for(const auto& [c1, c2] : coords){
+            double newEntry = gammaDist(rng);
+            total += newEntry;
+            (*currentBaseMatrix)(c1,c2) = newEntry;
+        }
+        for(const auto& [c1, c2] : coords){
+            (*currentBaseMatrix)(c1,c2) /= total;
+            (*currentBaseMatrix)(c2,c1) = (*currentBaseMatrix)(c1,c2);
+        }
+
+        oldBaseMatrix = std::unique_ptr<Eigen::Matrix<double, 20, 20>>(new Eigen::Matrix<double, 20, 20>{*currentBaseMatrix});
+    }
+    
+    // We waste a little bit of compute the first time we initilize this particle object by constructing this twice, but it it neglible
     currentPhylogeny = Tree(rng, aln.getTaxaNames());
 
     for(int i = 0; i < numNodes; i++){
@@ -116,7 +114,6 @@ void Particle::initialize(bool initInvar){
 
     boost::random::uniform_01 unif{};
 
-
     // I am just going to assume a uniform prior for now
     if(initInvar){
         currentPInvar = unif(rng);
@@ -124,7 +121,7 @@ void Particle::initialize(bool initInvar){
     }
 
     if(numRates > 1){
-        currentShape = boost::random::gamma_distribution(3.0, 0.5)(rng); 
+        currentShape = boost::random::gamma_distribution(3.0, 2.0)(rng); 
         oldShape = currentShape;
         discretizeGamma(currentRates, currentShape, numRates);
         oldRates = currentRates;
@@ -406,10 +403,10 @@ double Particle::lnPrior(){
     for(auto n : currentPhylogeny.getPostOrder()){
         lengthSum += n->branchLength;
     }
-    lnP += boost::math::pdf(boost::math::gamma_distribution<double>(shape, 1.0/treeRate), lengthSum);
+    lnP += boost::math::logpdf(boost::math::gamma_distribution<double>(shape, 1.0/treeRate), lengthSum);
 
     // Shape Prior
-    lnP += boost::math::pdf(boost::math::gamma_distribution<double>(3.0, 0.5), currentShape);
+    lnP += boost::math::logpdf(boost::math::gamma_distribution<double>(3.0, 2.0), currentShape);
 
     if(usingLG){
         // Rate Matrix Prior (This will only work for concentration of 2.0 for now)
@@ -629,6 +626,7 @@ double Particle::branchMove(){
 double Particle::rateMatrixMove(){
     auto coordVec = RateMatrices::contructLowerTriangleCoordinates();
     boost::random::uniform_01<double> unif{};
+    double hastings = 0.0;
 
     int numElementsToUpdate = 30;
 
@@ -680,12 +678,12 @@ double Particle::rateMatrixMove(){
         alphaReverse[i] = (z[i] + 0.01) * rateMatrixAlpha;
     }
 
-    double hastings = 0.0;
     for(int i = 0; i < x.size(); i++){
         hastings += (alphaReverse[i] - 1.0) * std::log(x[i]);
         hastings -= (alphaForward[i] - 1.0) * std::log(z[i]);
     }
     hastings += (190 - numElementsToUpdate - 1) * log(factor);
+
 
     updateRateMatrix = true;
     currentPhylogeny.updateAll();
@@ -722,6 +720,8 @@ double Particle::stationaryMove(){
 }
 
 double Particle::invarMove(){
+    double hastings = 0.0;
+
     double a = invarAlpha + 1.0;
     double b = (invarAlpha / currentPInvar) - a + 2.0;
     boost::random::beta_distribution<double> forwardDist{a, b};
@@ -732,18 +732,23 @@ double Particle::invarMove(){
     double b2 = (invarAlpha / newPInvar) - a2 + 2.0;
     boost::math::beta_distribution<double> backwardDesnity{a2, b2};
 
-    double forward = boost::math::pdf(forwardDensity, newPInvar);
-    double backward = boost::math::pdf(backwardDesnity, currentPInvar);
+    double forward = boost::math::logpdf(forwardDensity, newPInvar);
+    double backward = boost::math::logpdf(backwardDesnity, currentPInvar);
 
     currentPInvar = newPInvar;
+    hastings = backward - forward;
+
 
     updateInvar = true;
 
-    return backward - forward;
+    return hastings;
 }
 
 double Particle::shapeMove(){
-    double scale = std::exp(shapeDelta * (boost::random::uniform_01<double>{}(rng) - 0.5));
+    boost::random::uniform_01<double> unif{};
+    double hastings = 0.0;
+
+    double scale = std::exp(shapeDelta * (unif(rng) - 0.5));
     double currentV = currentShape;
     double newV = currentV * scale;
     currentShape = newV;
@@ -751,8 +756,9 @@ double Particle::shapeMove(){
     updateRate = true;
     currentPhylogeny.updateAll();
     discretizeGamma(currentRates, currentShape, numRates);
+    hastings = std::log(scale);
 
-    return std::log(scale);
+    return hastings;
 }
 
 double Particle::gibbsPartitionMove(double tempering){
