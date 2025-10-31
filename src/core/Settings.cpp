@@ -9,6 +9,15 @@
 
 using namespace ftxui;
 
+Component wrapFormElement(std::string label, Component& c){
+    return Renderer(c, [&] {
+        return hbox({
+            text(label) | size(WIDTH, EQUAL, 25),
+            separator(),
+            c->Render() | xflex,
+        }) | xflex;
+    });
+}
 
 Settings::Settings(){
     auto screen = ScreenInteractive::FitComponent();
@@ -21,83 +30,34 @@ Settings::Settings(){
         "Use GTR Rate Matrix"
     };
     auto rateMatrixBoxes = Radiobox(&rateMatrixChoices, &usingLG);
-
-    auto rateMatrixInput =  Renderer(rateMatrixBoxes, [&] {
-        return hbox({
-            text("Rate Matrices") | size(WIDTH, EQUAL, 25),
-            separator(),
-            rateMatrixBoxes->Render() | xflex,
-        }) | xflex;
-    });
+    auto rateMatrixInput =  wrapFormElement("Rate Matrices", rateMatrixBoxes);
 
     auto invarBox = Checkbox("", &invar);
-    auto invarInput = Renderer(invarBox, [&] {
-        return hbox({
-            text("Invariant Sites") | size(WIDTH, EQUAL, 25),
-            separator(),
-            invarBox->Render() | xflex,
-        }) | xflex;
-    });
+    auto invarInput = wrapFormElement("Invariant Sites", invarBox);
 
     std::string numRatesString = std::to_string(numRates);
     auto ratesField = Input(&numRatesString, "4");
-    auto ratesInput = Renderer(ratesField, [&] {
-        return hbox({
-            text("Discretized Rates") | size(WIDTH, EQUAL, 25),
-            separator(),
-            ratesField->Render() | xflex,
-        }) | xflex;
-    });
+    auto ratesInput = wrapFormElement("Discretized Rates", ratesField);
 
     std::string numThreadString = std::to_string(numThreads);
     auto threadField = Input(&numThreadString, "4");
-    auto threadInput = Renderer(threadField, [&] {
-        return hbox({
-            text("Thread Number") | size(WIDTH, EQUAL, 25),
-            separator(),
-            threadField->Render() | xflex,
-        }) | xflex;
-    });
+    auto threadInput = wrapFormElement("Thread Number", threadField);
 
     std::string rejuvenationString = std::to_string(rejuvenationIterations);
     auto rejuvenationField = Input(&rejuvenationString, "10");
-    auto rejuvenationInput = Renderer(rejuvenationField, [&] {
-        return hbox({
-            text("Rejuvenation Iterations") | size(WIDTH, EQUAL, 25),
-            separator(),
-            rejuvenationField->Render() | xflex,
-        }) | xflex;
-    });
+    auto rejuvenationInput = wrapFormElement("Rejuvenation Iterations", rejuvenationField);
 
     std::string numParticleString = std::to_string(numParticles);
     auto particleField = Input(&numParticleString, "500");
-    auto particleInput = Renderer(particleField, [&] {
-        return hbox({
-            text("Particle Number") | size(WIDTH, EQUAL, 25),
-            separator(),
-            particleField->Render() | xflex,
-        }) | xflex;
-    });
+    auto particleInput = wrapFormElement("Particle Number", particleField);
 
     std::string seedString = std::to_string(seed);
     auto seedField = Input(&seedString, "1");
-    auto seedInput = Renderer(seedField, [&] {
-        return hbox({
-            text("RNG Seed") | size(WIDTH, EQUAL, 25),
-            separator(),
-            seedField->Render() | xflex,
-        }) | xflex;
-    });
+    auto seedInput = wrapFormElement("RNG Seed", seedField);
 
     auto inputField = Input(&fastaFile, "Your FASTA");
-    auto fileInput = Renderer(inputField, [&] {
-        return hbox({
-            text("Input File") | size(WIDTH, EQUAL, 25),
-            separator(),
-            inputField->Render() | xflex,
-        }) | xflex;
-    });
-
+    auto fileInput = wrapFormElement("Input File", inputField);
+    
     auto onSumbit = [&] {
         if(fastaFile.empty()){
             errorMessage = "No FASTA provided";
