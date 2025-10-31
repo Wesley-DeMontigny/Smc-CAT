@@ -101,40 +101,38 @@ void computeSplitPosteriors(std::unordered_map<boost::dynamic_bitset<>, double>&
 }
 
 int main(int argc, char** argv){
-    int numParticles = 500;
-    int rejuvinationIterations = 10;
-    int numThreads = omp_get_max_threads();
-    omp_set_num_threads(numThreads);
-    bool invar = true;
-    bool lg = false;
-    double alg8Probability = 0.05;
-    int numRates = 2;
+    Settings settings = (argc <= 1)
+                        ? Settings()
+                        : Settings(argc, argv);
 
-    boost::random::mt19937 rng{1};
+
+    omp_set_num_threads(settings.numThreads);
+
+    boost::random::mt19937 rng{settings.seed};
     boost::random::uniform_01<double> unif{};
     
-    std::vector<double> rawLogLikelihoods(numParticles, 0);
-    std::vector<double> rawWeights(numParticles, -1.0 * std::log(numParticles));
-    std::vector<double> normalizedWeights(numParticles, 0.0);
+    std::vector<double> rawLogLikelihoods(settings.numParticles, 0);
+    std::vector<double> rawWeights(settings.numParticles, -1.0 * std::log(settings.numParticles));
+    std::vector<double> normalizedWeights(settings.numParticles, 0.0);
 
     std::vector<std::set<boost::dynamic_bitset<>>> particleSplits;
 
-    particleSplits.reserve(numParticles);
-    for(int i = 0; i < numParticles; i++){
+    particleSplits.reserve(settings.numParticles);
+    for(int i = 0; i < settings.numParticles; i++){
         particleSplits.push_back({});
     }
 
     std::vector<SerializedParticle> currentSerializedParticles;
     std::vector<SerializedParticle> oldSerializedParticles;
-    currentSerializedParticles.reserve(numParticles);
-    oldSerializedParticles.reserve(numParticles);
+    currentSerializedParticles.reserve(settings.numParticles);
+    oldSerializedParticles.reserve(settings.numParticles);
 
-    Alignment aln("/workspaces/FastCAT/local_testing/globin_aa_aligned.fasta");
+    Alignment aln(settings.fastaFile);
     int numChar = aln.getNumChar();
 
     std::unordered_map<boost::dynamic_bitset<>, double> splitPosteriorProbabilities;
 
-    std::cout << "Utilizing " << numThreads << " threads for working with " << numParticles << std::endl;
+    std::cout << "Utilizing " << settings.numThreads << " threads for working with " << settings.numParticles << std::endl;
 
     Mcmc mcmc{};
     mcmc.emplaceMove(std::tuple{
@@ -164,7 +162,7 @@ int main(int argc, char** argv){
             return m.stationaryMove();
         }
     });
-    if(numRates > 1){
+    if(settings.numRates > 1){
         mcmc.emplaceMove(std::tuple{
             1.0,
             [](Particle& m){
@@ -175,7 +173,7 @@ int main(int argc, char** argv){
             }
         });
     }
-    if(invar){
+    if(settings.invar){
         mcmc.emplaceMove(std::tuple{
             1.0,
             [](Particle& m){
@@ -186,7 +184,7 @@ int main(int argc, char** argv){
             }
         });
     }
-    if(!lg){
+    if(!settings.lg){
         mcmc.emplaceMove(std::tuple{
             1.0,
             [](Particle& m){
@@ -204,22 +202,22 @@ int main(int argc, char** argv){
 
     std::chrono::steady_clock::time_point preAnalysis = std::chrono::steady_clock::now();
 
-    particles.reserve(numThreads);
-    for (int t = 0; t < numThreads; t++) {
-        particles.emplace_back(t, aln, numRates, invar, lg);
+    particles.reserve(settings.numThreads);
+    for (int t = 0; t < settings.numThreads; t++) {
+        particles.emplace_back(settings.seed + t, aln, settings.numRates, settings.invar, settings.lg);
     }
 
     // Particle initialization
     std::cout << "Initializing SMC..." << std::endl;
     Particle& initP = particles[0];
-    for(int n = 0; n < numParticles; n++){  
+    for(int n = 0; n < settings.numParticles; n++){  
         rawLogLikelihoods[n] = initP.lnLikelihood();
         currentSerializedParticles.emplace_back(
             initP.getNewick(), initP.getAssignments(), initP.getCategories(),
             initP.getBaseMatrix(), initP.getPInvar(), initP.getShape()
         );
         particleSplits[n] = initP.getSplitSet();
-        initP.initialize(invar);
+        initP.initialize(settings.invar);
     }
     oldSerializedParticles = currentSerializedParticles;
     std::cout << "Initialized Particles..." << std::endl;
@@ -230,7 +228,7 @@ int main(int argc, char** argv){
     for(int iteration = 1; lastTemp < 1.0; iteration++){
         double currentTemp = lastTemp;
         double ESS = 0.0;
-        computeNextStep(rawWeights, rawLogLikelihoods, normalizedWeights, ESS, currentTemp, lastTemp, numParticles);
+        computeNextStep(rawWeights, rawLogLikelihoods, normalizedWeights, ESS, currentTemp, lastTemp, settings.numParticles);
 
         std::cout << iteration << "\tTemp: " << currentTemp << "\tESS: " << ESS << std::endl;
 
@@ -238,28 +236,28 @@ int main(int argc, char** argv){
             splitPosteriorProbabilities,
             normalizedWeights,
             particleSplits,
-            numParticles
+            settings.numParticles
         );
 
-        if(ESS <= 0.6 * numParticles && currentTemp != 1.0){
+        if(ESS <= 0.6 * settings.numParticles && currentTemp != 1.0){
             std::cout << "Resampling Particles..." << std::endl;
 
             // Systematic resampling
-            double u = unif(rng) / static_cast<double>(numParticles);
+            double u = unif(rng) / static_cast<double>(settings.numParticles);
             std::vector<int> assignments;
-            assignments.reserve(numParticles);
+            assignments.reserve(settings.numParticles);
             double cumulative = normalizedWeights[0];
             int currentWeight = 0;
             int k = 0;
             double ruler = u;
-            double step = 1.0 / numParticles;
-            while(static_cast<int>(assignments.size()) < numParticles){
+            double step = 1.0 / settings.numParticles;
+            while(static_cast<int>(assignments.size()) < settings.numParticles){
                 if(ruler <= cumulative){
                     assignments.push_back(k);
                     ruler += step;
                 } 
                 else{
-                    if (++k >= numParticles) { k = numParticles - 1; cumulative = 1.0; }
+                    if (++k >= settings.numParticles) { k = settings.numParticles - 1; cumulative = 1.0; }
                     else cumulative += normalizedWeights[k];
                 }
             }
@@ -267,19 +265,19 @@ int main(int argc, char** argv){
             // Mutate particles after resampling
             std::cout << "Rejuvenating Particles..." << std::endl;
             #pragma omp parallel for schedule(dynamic)
-            for (int n = 0; n < numParticles; n++) {
+            for (int n = 0; n < settings.numParticles; n++) {
                 int threadID = omp_get_thread_num();
                 Particle& p = particles[threadID];
                 int particleID = assignments[n];
                 p.copyFromSerialized(currentSerializedParticles[particleID]);
 
-                mcmc.run(p, rejuvinationIterations, currentTemp);
-                if(unif(rng) < alg8Probability){ // Update the CRP only for a fraction of particles
+                mcmc.run(p, settings.rejuvenationIterations, currentTemp);
+                if(unif(rng) < settings.alg8Probability){ // Update the CRP only for a fraction of particles
                     p.gibbsPartitionMove(currentTemp);
                     p.refreshLikelihood(true);
                 }
                 rawLogLikelihoods[n] = p.lnLikelihood();
-                rawWeights[n] = -1.0 * std::log(numParticles); // Technically this happens during resampling, but our MCMC kernel is invariant, so theres no difference
+                rawWeights[n] = -1.0 * std::log(settings.numParticles); // Technically this happens during resampling, but our MCMC kernel is invariant, so theres no difference
                 p.writeToSerialized(oldSerializedParticles[n]);
 
                 particleSplits[n] = p.getSplitSet();
@@ -331,7 +329,7 @@ int main(int argc, char** argv){
     for(auto& s : selectedSplits){
         branchWeightedMeans.emplace(s, Acc{});
     }
-    for (int n = 0; n < numParticles; n++) {
+    for (int n = 0; n < settings.numParticles; n++) {
         Particle& p = particles[0];
         p.copyFromSerialized(currentSerializedParticles[n]);
         std::unordered_map<boost::dynamic_bitset<>, double> sbMap = p.getSplitBranchMap();

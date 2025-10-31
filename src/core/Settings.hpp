@@ -7,15 +7,18 @@
     usage help.
 */
 struct Settings {
-    Settings(void) = delete;
+    Settings(void);
     Settings(int argc, char* argv[]);
-    std::string alignment_file;
-    std::string mcmc_trace = "trace.log";
-    std::string tree_trace = "trees.log";
-    std::string starting_tree;
 
-    int num_iter = 1000;
-    int sampling_freq = 100;
+    int numParticles = 500;
+    int rejuvenationIterations = 10;
+    int numThreads = 8;
+    bool invar = false;
+    bool lg = false;
+    double alg8Probability = 0.05;
+    int numRates = 1;
+    unsigned int seed = 1;
+    std::string fastaFile = "/workspaces/FastCAT/local_testing/globin_aa_aligned.fasta";
 };
 
 #endif
