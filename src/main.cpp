@@ -100,7 +100,7 @@ void computeSplitPosteriors(std::unordered_map<boost::dynamic_bitset<>, double>&
     }
 }
 
-int main(int argc, char** argv){
+int main(int argc, char* argv[]){
     Settings settings = (argc <= 1)
                         ? Settings()
                         : Settings(argc, argv);

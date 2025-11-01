@@ -11,25 +11,26 @@
  * 
  */
 struct TransitionProbabilityClass {
-    TransitionProbabilityClass(void)=delete;
-    TransitionProbabilityClass(boost::random::mt19937& rng, int n, int c, Eigen::Matrix<double, 20, 20>* bM);
+    public:
+        TransitionProbabilityClass(void)=delete;
+        TransitionProbabilityClass(boost::random::mt19937& rng, int n, int c, Eigen::Matrix<double, 20, 20>* bM);
 
-    std::vector<Eigen::Matrix<CL_TYPE, 20, 20>> transitionProbabilities; // Indexed by node
-    
-    Eigen::Matrix<double, 20, 20>* baseMatrix;
-    Eigen::Vector<double, 20> stationaryDistribution;
+        std::vector<Eigen::Matrix<CL_TYPE, 20, 20>> transitionProbabilities; // Indexed by node
+        
+        Eigen::Matrix<double, 20, 20>* baseMatrix;
+        Eigen::Vector<double, 20> stationaryDistribution;
 
-    std::set<int> members;
+        std::set<int> members;
 
-    void recomputeEigens();
-    void recomputeTransitionProbs(int n, double t, int c, double r);
-    double dirichletSimplexMove(boost::random::mt19937& rng, double alpha);
-    double lnPrior();
+        void recomputeEigens();
+        void recomputeTransitionProbs(int n, double t, int c, double r);
+        double dirichletSimplexMove(boost::random::mt19937& rng, double alpha);
+        double lnPrior();
 
-    static Eigen::Vector<double, 20> sampleStationary(boost::random::mt19937& rng, const Eigen::Vector<double, 20>& alpha);
-    static double stationarylnPdf(const Eigen::Vector<double, 20>& concentration, const Eigen::Vector<double, 20>& x);
+        static Eigen::Vector<double, 20> sampleStationary(boost::random::mt19937& rng, const Eigen::Vector<double, 20>& alpha);
+        static double stationarylnPdf(const Eigen::Vector<double, 20>& concentration, const Eigen::Vector<double, 20>& x);
 
-    bool updated;
+        bool updated;
     private:
         Eigen::DiagonalMatrix<Eigen::dcomplex, 20> workingDiag;
         Eigen::Matrix<Eigen::dcomplex, 20, 20> workingMatrix1;

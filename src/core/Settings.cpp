@@ -65,10 +65,10 @@ Settings::Settings(){
         }
 
         try {
-            seed = boost::lexical_cast<int>(seedString);
+            seed = boost::lexical_cast<unsigned int>(seedString);
         }
         catch(...) {
-            errorMessage = "Seed is an int";
+            errorMessage = "Seed is an unsigned int";
             return;
         }
 
@@ -170,5 +170,137 @@ Settings::Settings(){
 }
 
 Settings::Settings(int argc, char* argv[]){
-    // Implement command line reading
+
+    std::vector<std::string> arguments;
+    for(int i = 1; i < argc; i++){
+        std::string arg = argv[i];
+        arguments.push_back(arg);
+    }
+
+    bool chosenMatrix = false; // We want the user to be forced to set this
+    bool setFasta = false;
+
+    std::string lastArgument;
+    for(const auto& arg : arguments){
+        
+        if(arg == "-LG"){
+            if(chosenMatrix){
+                usage();
+                std::cout << "Error: Multiple rate matrices have been selected! Are you sure you've set your arguments correctly?" << std::endl;
+                std::exit(1);
+            }
+
+            lg = true;
+            chosenMatrix = true;
+        }
+        else if(arg == "-GTR"){
+            if(chosenMatrix){
+                usage();
+                std::cout << "Error: Multiple rate matrices have been selected! Are you sure you've set your arguments correctly?" << std::endl;
+                std::exit(1);
+            }
+            
+            lg = false;
+            chosenMatrix = true;
+        }
+        else if(arg == "-I"){
+            invar = true;
+        }
+        else if(arg == "-h" || arg == "-help"){
+            usage();
+            std::exit(0);
+        }
+        else if(lastArgument == "-G"){
+            try {
+                numRates = boost::lexical_cast<int>(arg);
+            }
+            catch(...) {
+                usage();
+                std::cout << "Error: -G is supposed to be an integer representing the number of discretized rate categories." << std::endl;
+                std::exit(1);
+            }
+        }
+        else if(lastArgument == "-t"){
+            try {
+                numThreads = boost::lexical_cast<int>(arg);
+            }
+            catch(...) {
+                usage();
+                std::cout << "Error: -t is supposed to be an integer representing the number of threads." << std::endl;
+                std::exit(1);
+            }
+        }
+        else if(lastArgument == "-p"){
+            try {
+                numParticles = boost::lexical_cast<int>(arg);
+            }
+            catch(...) {
+                usage();
+                std::cout << "Error: -p is supposed to be an integer representing the number of particles." << std::endl;
+                std::exit(1);
+            }
+        }
+        else if(lastArgument == "-r"){
+            try {
+                rejuvenationIterations = boost::lexical_cast<int>(arg);
+            }
+            catch(...) {
+                usage();
+                std::cout << "Error: -r is supposed to be an integer representing the number of rejuvenation iterations." << std::endl;
+                std::exit(1);
+            }
+        }
+        else if(lastArgument == "-s"){
+            try {
+                seed = boost::lexical_cast<unsigned int>(arg);
+            }
+            catch(...) {
+                usage();
+                std::cout << "Error: -s is supposed to be a numeric (unsigned int) seed." << std::endl;
+                std::exit(1);
+            }
+        }
+        else if(lastArgument == "-a"){
+            fastaFile = arg;
+            setFasta = true;
+        }
+        else{
+            usage();
+            std::cout << "Error: Unrecognized argument " << arg << std::endl;
+            std::exit(1);
+        }
+
+        lastArgument = arg;
+    }
+
+
+    if(!chosenMatrix){
+        usage();
+        std::cout << "Error: No rate matrix has been chosen! Please set -GTR or -LG." << std::endl;
+        std::exit(1);
+    }
+
+    if(!setFasta){
+        usage();
+        std::cout << "Error: No alignment has been provided! Please provide a FASTA file with -a" << std::endl;
+        std::exit(1);
+    }
+}
+
+void Settings::usage(){
+    std::cout << "Minimum FastCAT Usage:\n";
+    std::cout << "\tfastcat -a <fasta_file> -LG\n";
+    std::cout << "\tfastcat -a <fasta_file> -GTR\n";
+    std::cout << "FastCAT Command Line Arguments:\n";
+    std::cout << "\t-a <fasta_file>         Specifies the alignment for the analysis.\n";
+    std::cout << "\t-t <num_threads>        Specify the number of threads to dedicate to the analysis.\n";
+    std::cout << "\t-p <num_particles>      Specify the number of particles to use during SMC.\n";
+    std::cout << "\t-r <num_iter>           Specify the number of rejuvenation iterations to use during SMC.\n";
+    std::cout << "\t-s <seed>               Specify the RNG seed to use for your analysis. This is important to set if you are doing multiple analyses!\n";
+    std::cout << "\t-LG                     Use the LG rate matrix.\n";
+    std::cout << "\t-GTR                    Infer an amino acid GTR matrix.\n";
+    std::cout << "\t-I                      Use invariant sites mixture.\n";
+    std::cout << "\t-G <num_rates>          Specify the number of discretized rate categories in the rate mixture.\n";
+
+    std::cout << std::flush;
 }

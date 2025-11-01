@@ -40,47 +40,41 @@ class Tree {
         Tree(const std::vector<std::pair<boost::dynamic_bitset<>, double>>& splits, const std::vector<std::string>& taxaNames);
         Tree(const Tree& t); // Deep copy
         Tree& operator=(const Tree& t); // Assignment copy
-
-        std::unordered_map<int, boost::dynamic_bitset<>> computeSplits() const;
-        std::unordered_map<int, boost::dynamic_bitset<>> getMoveableSplits() const;
-        std::set<boost::dynamic_bitset<>> getSplitSet() const;
-        std::unordered_map<boost::dynamic_bitset<>, double> getSplitBranchMap() const;
-
-        std::string generateNewick(const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosteriorProbabilities) const;
-        std::string generateNewick() const; // Generates a Newick string for the tree. Assumes the post-order is correct.
-        const std::vector<TreeNode*>& getPostOrder() const {return postOrder;}
-        const std::vector<TreeNode*>& getTips() const {return tips;}
-
+        
         const int getNumNodes() const {return postOrder.size();}
         const int getNumTaxa() const {return tips.size();}
-        TreeNode* getRoot() const {return root;}
-
-        double scaleBranchMove(boost::random::mt19937& rng, double delta);
-        double scaleSubtreeMove(boost::random::mt19937& rng, double delta);
+        const std::vector<TreeNode*>& getPostOrder() const {return postOrder;}
+        const std::vector<TreeNode*>& getTips() const {return tips;}
         double adaptiveNNIMove(boost::random::mt19937& rng, double epsilon, const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosterior);
         double NNIMove(boost::random::mt19937& rng);
-
+        double scaleBranchMove(boost::random::mt19937& rng, double delta);
+        double scaleSubtreeMove(boost::random::mt19937& rng, double delta);
+        std::set<boost::dynamic_bitset<>> getSplitSet() const;
+        std::string generateNewick() const; // Generates a Newick string for the tree. Assumes the post-order is correct.
+        std::string generateNewick(const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosteriorProbabilities) const;
+        std::unordered_map<boost::dynamic_bitset<>, double> getSplitBranchMap() const;
+        std::unordered_map<int, boost::dynamic_bitset<>> computeSplits() const;
+        std::unordered_map<int, boost::dynamic_bitset<>> getMoveableSplits() const;
+        TreeNode* getRoot() const {return root;}
         void updateAll();
 
         friend class bitsetGetter;
     private:
-        void regeneratePostOrder();
+        int getTaxonIndex(std::string token, const std::vector<std::string>& taxaNames) const;
+        std::string recursiveNewickGenerate(std::string s, TreeNode* p, const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosteriorProbabilities, const std::unordered_map<int, boost::dynamic_bitset<>>& splitMap) const;
+        std::string recursiveNewickGenerate(std::string s, TreeNode* p) const;
+        std::vector<std::string> parseNewickString(const std::string newick) const;
+        TreeNode* addNode();
+        TreeNode* addNode(boost::random::mt19937& rng);
+        TreeNode* buildTree(const std::vector<std::pair<boost::dynamic_bitset<>, double>>& splits, const boost::dynamic_bitset<>& taxa);
         void clone(const Tree& t);
-
+        void recursivePostOrderAssign(TreeNode* p);
+        void regeneratePostOrder();
+        
         TreeNode* root;
         std::vector<TreeNode*> postOrder;
         std::vector<TreeNode*> tips;
         std::vector<std::unique_ptr<TreeNode>> nodes; // We let the nodes vector own the node unique_ptr
-        
-        TreeNode* addNode(boost::random::mt19937& rng);
-        TreeNode* addNode();
-        TreeNode* buildTree(const std::vector<std::pair<boost::dynamic_bitset<>, double>>& splits, const boost::dynamic_bitset<>& taxa);
-        int getTaxonIndex(std::string token, const std::vector<std::string>& taxaNames) const;
-        std::vector<std::string> parseNewickString(const std::string newick) const;
-
-        void recursivePostOrderAssign(TreeNode* p);
-        std::string recursiveNewickGenerate(std::string s, TreeNode* p) const;
-        std::string recursiveNewickGenerate(std::string s, TreeNode* p, const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosteriorProbabilities, const std::unordered_map<int, boost::dynamic_bitset<>>& splitMap) const;
 };
 
 #endif
