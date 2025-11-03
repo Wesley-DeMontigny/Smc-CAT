@@ -12,7 +12,7 @@ using namespace ftxui;
 Component wrapFormElement(std::string label, Component& c){
     return Renderer(c, [&] {
         return hbox({
-            text(label) | size(WIDTH, EQUAL, 25),
+            text(label) | size(WIDTH, EQUAL, 30),
             separator(),
             c->Render() | xflex,
         }) | xflex;
@@ -22,6 +22,7 @@ Component wrapFormElement(std::string label, Component& c){
 Settings::Settings(){
     auto screen = ScreenInteractive::FitComponent();
 
+    bool submitted = false;
     std::string errorMessage = "";
 
     int usingLG = 0;
@@ -37,7 +38,7 @@ Settings::Settings(){
 
     std::string numRatesString = std::to_string(numRates);
     auto ratesField = Input(&numRatesString, "4");
-    auto ratesInput = wrapFormElement("Discretized Rates", ratesField);
+    auto ratesInput = wrapFormElement("Rate Number", ratesField);
 
     std::string numThreadString = std::to_string(numThreads);
     auto threadField = Input(&numThreadString, "4");
@@ -45,7 +46,7 @@ Settings::Settings(){
 
     std::string rejuvenationString = std::to_string(rejuvenationIterations);
     auto rejuvenationField = Input(&rejuvenationString, "10");
-    auto rejuvenationInput = wrapFormElement("Rejuvenation Iterations", rejuvenationField);
+    auto rejuvenationInput = wrapFormElement("MCMC Iterations", rejuvenationField);
 
     std::string numParticleString = std::to_string(numParticles);
     auto particleField = Input(&numParticleString, "500");
@@ -104,6 +105,9 @@ Settings::Settings(){
             return;
         }
 
+        lg = (usingLG == 0);
+
+        submitted = true;
         screen.Exit();
     };
     auto exitButton = Button("Save and Run", onSumbit);
@@ -139,7 +143,7 @@ Settings::Settings(){
 
         if(!errorMessage.empty()){
             catElements.push_back(
-                paragraph(errorMessage) | color(Color::Red) | bold
+                text(errorMessage) | color(Color::Red) | bold
             );
         }
 
@@ -166,7 +170,8 @@ Settings::Settings(){
 
     screen.Loop(renderer);
 
-    lg = (usingLG == 0);
+    if(!submitted)
+        std::exit(0);
 }
 
 Settings::Settings(int argc, char* argv[]){

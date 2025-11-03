@@ -22,7 +22,7 @@ void Mcmc::initMoveProbs(){
     }
 }
 
-double Mcmc::run(Particle& model, int iterations, double tempering){
+void Mcmc::operator()(Particle& model, int iterations, double tempering){
     if(moveProbs.size() == 0){
         std::cout << "Error! The move probabilities are not initialized. Did you forget to call initMoveProbs?" << std::endl;
         std::exit(1);
@@ -70,6 +70,4 @@ double Mcmc::run(Particle& model, int iterations, double tempering){
             }
         }
     }
-
-    return currentPosterior;
 }

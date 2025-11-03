@@ -12,15 +12,16 @@ struct Settings {
 
     void usage();
 
-    int numParticles = 250;
+    int numParticles = 500;
     int rejuvenationIterations = 10;
-    int numThreads = 1;
+    int numThreads = 10;
     bool invar = false;
     bool lg = false;
     double alg8Probability = 0.1;
+    double rejuvenationThreshold = 0.6;
     int numRates = 1;
     unsigned int seed = 1;
-    std::string fastaFile; 
+    std::string fastaFile = "/workspaces/FastCAT/local_testing/globin_aa_aligned.fasta"; 
 };
 
 #endif

@@ -10,13 +10,12 @@
 class Particle;
 
 /**
- * @brief 
- * 
+ * @brief MCMC Functor
  */
 class Mcmc {
     public:
         Mcmc(void);
-        double run(Particle& m, int iterations, double tempering);
+        void operator()(Particle& m, int iterations, double tempering);
         void emplaceMove(std::tuple<double, std::function<int(Particle&)>, std::function<double(Particle&)>>&& move);
         void initMoveProbs();
     private:
