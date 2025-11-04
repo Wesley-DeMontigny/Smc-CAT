@@ -64,7 +64,7 @@ Particle::Particle(int seed, Alignment& aln, int nR, bool initInvar, bool lg) :
         }
         isInvariant[i] = invariant;
 
-        if(invariant == 1.0){
+        if(invariant == 1.0 && code1 < 20){
             invariantCharacter[i] = code1;
         }
         else{
@@ -403,10 +403,10 @@ double Particle::lnPrior(){
     for(auto n : currentPhylogeny.getPostOrder()){
         lengthSum += n->branchLength;
     }
-    lnP += boost::math::logpdf(boost::math::gamma_distribution<double>(shape, 1.0/treeRate), lengthSum);
+    lnP += std::log(boost::math::pdf(boost::math::gamma_distribution<double>(shape, 1.0/treeRate), lengthSum));
 
     // Shape Prior
-    lnP += boost::math::logpdf(boost::math::gamma_distribution<double>(3.0, 2.0), currentShape);
+    lnP += std::log(boost::math::pdf(boost::math::gamma_distribution<double>(3.0, 2.0), currentShape));
 
     if(usingLG){
         // Rate Matrix Prior (This will only work for concentration of 2.0 for now)
@@ -732,8 +732,8 @@ double Particle::invarMove(){
     double b2 = (invarAlpha / newPInvar) - a2 + 2.0;
     boost::math::beta_distribution<double> backwardDesnity{a2, b2};
 
-    double forward = boost::math::logpdf(forwardDensity, newPInvar);
-    double backward = boost::math::logpdf(backwardDesnity, currentPInvar);
+    double forward = std::log(boost::math::pdf(forwardDensity, newPInvar));
+    double backward = std::log(boost::math::pdf(backwardDesnity, currentPInvar));
 
     currentPInvar = newPInvar;
     hastings = backward - forward;

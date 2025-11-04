@@ -16,7 +16,7 @@ TransitionProbabilityClass::TransitionProbabilityClass(boost::random::mt19937& r
     workingMatrix2 = Eigen::Matrix<Eigen::dcomplex, 20, 20>::Zero();
     workingDiag = Eigen::DiagonalMatrix<Eigen::dcomplex, 20>{};
 
-    stationaryDistribution = sampleStationary(rng, Eigen::Vector<double, 20>::Ones() * 2.0);
+    stationaryDistribution = sampleStationary(rng, Eigen::Vector<double, 20>::Ones() * 5.0);
 }
 
 Eigen::Vector<double, 20> TransitionProbabilityClass::sampleStationary(boost::random::mt19937& rng, const Eigen::Vector<double, 20>& alpha){
@@ -85,7 +85,7 @@ void TransitionProbabilityClass::recomputeTransitionProbs(int n, double t, int c
 
 double TransitionProbabilityClass::lnPrior(){
     return TransitionProbabilityClass::stationarylnPdf(
-        Eigen::Vector<double, 20>::Ones() * 2.0,
+        Eigen::Vector<double, 20>::Ones() * 5.0,
         stationaryDistribution
     );
 }

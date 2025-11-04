@@ -4,7 +4,6 @@
 #include <iostream>
 #include <boost/math/distributions.hpp>
 #include <boost/dynamic_bitset.hpp>
-#include <boost/math/special_functions/logsumexp.hpp>
 #include <vector>
 #include <set>
 #include <cmath>
