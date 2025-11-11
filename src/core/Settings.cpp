@@ -1,5 +1,6 @@
 #include "Settings.hpp"
 #include <boost/lexical_cast.hpp>
+#ifdef USE_UI
 #include <ftxui/component/captured_mouse.hpp>
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/component_base.hpp>
@@ -173,6 +174,7 @@ Settings::Settings(){
     if(!submitted)
         std::exit(0);
 }
+#endif
 
 Settings::Settings(int argc, char* argv[]){
 

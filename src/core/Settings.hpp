@@ -7,7 +7,11 @@
  * usage help. 
  */
 struct Settings {
+    #ifdef USE_UI
     Settings(void);
+    #else
+    Settings(void)=delete;
+    #endif
     Settings(int argc, char* argv[]);
 
     void usage();
@@ -17,9 +21,9 @@ struct Settings {
     int numThreads = 10;
     bool invar = false;
     bool lg = false;
-    double alg8Probability = 0.1;
+    double alg8Probability = 0.05;
     double rejuvenationThreshold = 0.6;
-    int numRates = 1;
+    int numRates = 4;
     unsigned int seed = 1;
     std::string fastaFile = "/workspaces/FastCAT/local_testing/globin_aa_aligned.fasta"; 
 };

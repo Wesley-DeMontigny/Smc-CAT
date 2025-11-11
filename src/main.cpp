@@ -18,9 +18,13 @@
 #include <unordered_map>
 
 int main(int argc, char* argv[]){
+    #ifdef USE_UI
     Settings settings = (argc <= 1)
                         ? Settings()
                         : Settings(argc, argv);
+    #else
+    Settings settings = Settings(argc, argv);
+    #endif
 
     omp_set_num_threads(settings.numThreads);
 
