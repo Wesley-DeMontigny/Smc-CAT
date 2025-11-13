@@ -29,6 +29,12 @@ Eigen::Vector<double, 20> TransitionProbabilityClass::sampleStationary(boost::ra
         denom += randGamma;
     }
 
+    for(int i = 0; i < 20; i++){
+        if(stationaryDistribution(i) / denom == 0){
+            std::cout << "This aint right" << std::endl;
+        }
+    }
+
     return stationaryDistribution / denom;
 }
 
@@ -93,11 +99,13 @@ double TransitionProbabilityClass::lnPrior(){
 double TransitionProbabilityClass::dirichletSimplexMove(boost::random::mt19937& rng, double alpha){
     Eigen::Vector<double, 20> concentrations = stationaryDistribution;
     concentrations *= alpha;
+    concentrations += Eigen::Vector<double, 20>::Ones();
 
     Eigen::Vector<double, 20> newStationaryDistribution = sampleStationary(rng, concentrations);
 
     Eigen::Vector<double, 20> revConcentrations = newStationaryDistribution;
     revConcentrations *= alpha;
+    revConcentrations += Eigen::Vector<double, 20>::Ones();
 
     double forward = stationarylnPdf(concentrations, newStationaryDistribution);
     double backward = stationarylnPdf(revConcentrations, stationaryDistribution);
@@ -109,7 +117,7 @@ double TransitionProbabilityClass::dirichletSimplexMove(boost::random::mt19937& 
     for(int i = 0; i < 20; i++) {
         stationaryDistribution(i) = stationaryDistribution(i)/total;
 
-        if(stationaryDistribution(i) < 1E-10) {
+        if(stationaryDistribution(i) < 1E-6) {
             return -1 * INFINITY;
         }
     }

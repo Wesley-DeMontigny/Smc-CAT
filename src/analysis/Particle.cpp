@@ -320,9 +320,8 @@ std::vector<Eigen::Vector<double, 20>> Particle::getCategories() const {
 void Particle::accept(){
     oldLnLikelihood = currentLnLikelihood;
 
-    if(updateNNI || updateBranchLength || updateScaleSubtree || updateAdaptiveNNI){
-        oldPhylogeny = currentPhylogeny;
-    }
+    auto& postOrder = currentPhylogeny.getPostOrder();
+    auto& oldPostOrder = oldPhylogeny.getPostOrder();    
 
     std::copy(rescaleBuffer.get(), 
         rescaleBuffer.get() + numChar * numNodes * numRates,
@@ -334,11 +333,51 @@ void Particle::accept(){
         oldConditionalLikelihoodFlags.get()
     );
     
-    if(updateBranchLength || updateStationary || updateScaleSubtree || updateRate || updateAdaptiveNNI || updateRateMatrix){
-        *oldBaseMatrix = *currentBaseMatrix;
+    if(updateRate){
         oldTransitionProbabilityClasses = currentTransitionProbabilityClasses;
         oldRates = currentRates;
         oldShape = currentShape;
+    }
+    else if(updateRateMatrix){
+        *oldBaseMatrix = *currentBaseMatrix;
+        oldTransitionProbabilityClasses = currentTransitionProbabilityClasses;
+    }
+    else if(updateStationary){
+        for(int i = 0; i < currentTransitionProbabilityClasses.size(); i++){
+            if(currentTransitionProbabilityClasses[i].updated){
+                currentTransitionProbabilityClasses[i].updated = false;
+                oldTransitionProbabilityClasses[i] = currentTransitionProbabilityClasses[i];
+            }
+        }
+    }
+    else if(updateBranchLength || updateScaleSubtree){ // This implies the post order traversals between new and old are the same
+        auto& postOrder = currentPhylogeny.getPostOrder();
+        auto& oldPostOrder = oldPhylogeny.getPostOrder();
+        std::vector<TreeNode*> flipNodes;
+        for(int i = 0; i < postOrder.size(); i++){
+            TreeNode* node = postOrder[i];
+            if(node->updateTP){
+                flipNodes.push_back(node);
+                oldPostOrder[i]->branchLength = node->branchLength;
+                node->updateTP = false;
+            }
+        }
+
+        for(int i = 0; i < currentTransitionProbabilityClasses.size(); i++){
+            for(TreeNode* node : flipNodes){
+                if(node->updateTP){
+                    oldTransitionProbabilityClasses[i].transitionProbabilities[node->id] = currentTransitionProbabilityClasses[i].transitionProbabilities[node->id];
+                }
+            }
+        }
+    }
+    else if(updateNNI || updateAdaptiveNNI){
+        oldPhylogeny = currentPhylogeny;
+    }
+
+    for(auto n : postOrder){
+        n->updateCL = false;
+        n->updateTP = false;
     }
 
     oldPInvar = currentPInvar;
@@ -356,9 +395,8 @@ void Particle::accept(){
 void Particle::reject(){
     currentLnLikelihood = oldLnLikelihood;
 
-    if(updateNNI || updateBranchLength || updateScaleSubtree || updateAdaptiveNNI){
-        currentPhylogeny = oldPhylogeny;
-    }
+    auto& postOrder = currentPhylogeny.getPostOrder();
+    auto& oldPostOrder = oldPhylogeny.getPostOrder();
 
     std::copy(rescaleBuffer.get() + numChar * numNodes * numRates,
         rescaleBuffer.get() + 2 * numChar * numNodes * numRates,
@@ -370,11 +408,47 @@ void Particle::reject(){
         currentConditionalLikelihoodFlags.get()
     );
 
-    if(updateBranchLength || updateStationary || updateScaleSubtree || updateRate || updateAdaptiveNNI || updateRateMatrix){
-        *currentBaseMatrix = *oldBaseMatrix;
+    if(updateRate){
         currentTransitionProbabilityClasses = oldTransitionProbabilityClasses;
         currentRates = oldRates;
         currentShape = oldShape;
+    }
+    else if(updateRateMatrix){
+        *currentBaseMatrix = *oldBaseMatrix;
+        currentTransitionProbabilityClasses = oldTransitionProbabilityClasses;
+    }
+    else if(updateStationary){
+        for(int i = 0; i < currentTransitionProbabilityClasses.size(); i++){
+            if(currentTransitionProbabilityClasses[i].updated){
+                currentTransitionProbabilityClasses[i] = oldTransitionProbabilityClasses[i];
+            }
+        }
+    }
+    else if(updateBranchLength || updateScaleSubtree){ // This implies the post order traversals between new and old are the same
+        std::vector<TreeNode*> flipNodes;
+        for(int i = 0; i < postOrder.size(); i++){
+            TreeNode* node = postOrder[i];
+            if(node->updateTP){
+                flipNodes.push_back(node);
+                node->branchLength = oldPostOrder[i]->branchLength;
+            }
+        }
+
+        for(int i = 0; i < currentTransitionProbabilityClasses.size(); i++){
+            for(TreeNode* node : flipNodes){
+                if(node->updateTP){
+                    currentTransitionProbabilityClasses[i].transitionProbabilities[node->id] = oldTransitionProbabilityClasses[i].transitionProbabilities[node->id];
+                }
+            }
+        }
+    }
+    else if(updateNNI || updateAdaptiveNNI){
+        currentPhylogeny = oldPhylogeny;
+    }
+
+    for(auto n : postOrder){
+        n->updateCL = false;
+        n->updateTP = false;
     }
 
     currentPInvar = oldPInvar;
@@ -452,7 +526,6 @@ void Particle::refreshLikelihood(bool forceUpdate){
             if(c.updated || forceUpdate){
                 c.recomputeEigens();
                 for(auto n : postOrder){
-                    n->updateTP = false;
                     for(int r = 0; r < numRates; r++)
                         c.recomputeTransitionProbs(n->id, n->branchLength, r, currentRates[r]);
                 }
@@ -463,7 +536,6 @@ void Particle::refreshLikelihood(bool forceUpdate){
     else if(updateBranchLength || updateScaleSubtree || updateRate || updateRateMatrix){ // Update specific branch lengths if that was the last move
         for(auto n : postOrder){
             if(n->updateTP){
-                n->updateTP = false;
                 for(auto& c : currentTransitionProbabilityClasses){
                     for(int r = 0; r < numRates; r++){
                         c.recomputeTransitionProbs(n->id, n->branchLength, r, currentRates[r]);
@@ -544,10 +616,6 @@ void Particle::refreshLikelihood(bool forceUpdate){
     std::chrono::steady_clock::time_point postPrune = std::chrono::steady_clock::now();
     std::cout << "Felsenstein's pruning algorithm completed in " << std::chrono::duration_cast<std::chrono::milliseconds>(postPrune - prePrune).count() << "[milliseconds]" << std::endl;
     #endif
-
-    for(auto n : postOrder){
-        n->updateCL = false;
-    }
 
 
     int rIndex = currentPhylogeny.getRoot()->id;
@@ -653,7 +721,7 @@ double Particle::rateMatrixMove(){
         
     double total = 0.0;
     for(int i = 0; i < x.size(); i++){
-        alphaForward[i] = (x[i] + 0.01) * rateMatrixAlpha;
+        alphaForward[i] = (x[i] * rateMatrixAlpha) + 1.0;
         double randomGamma = boost::random::gamma_distribution{alphaForward[i], 1.0}(rng);
         z[i] = randomGamma;
         total += randomGamma;
@@ -675,7 +743,7 @@ double Particle::rateMatrixMove(){
     }
         
     for(int i = 0; i < z.size(); i++){
-        alphaReverse[i] = (z[i] + 0.01) * rateMatrixAlpha;
+        alphaReverse[i] = (z[i] * rateMatrixAlpha) + 1.0;
     }
 
     for(int i = 0; i < x.size(); i++){
@@ -692,25 +760,7 @@ double Particle::rateMatrixMove(){
 }
 
 double Particle::stationaryMove(){
-    std::vector<double> weights;
-    weights.reserve(currentTransitionProbabilityClasses.size());
-    double total = 0.0;
-    for(auto& c : currentTransitionProbabilityClasses){
-        int classSize = c.members.size();
-        total += classSize;
-        weights.push_back(classSize);
-    }
-
-    double randomDraw = boost::random::uniform_01<double>{}(rng) * total;
-    int randCategory = 0;
-    double cumSum = 0.0;
-    for(int i = 0; i < weights.size(); i++){
-        cumSum += weights[i];
-        if(cumSum >= randomDraw){
-            randCategory = i;
-            break;
-        }
-    }
+    int randCategory = (int)(boost::random::uniform_01<double>{}(rng) * currentTransitionProbabilityClasses.size());
 
     double hastings = currentTransitionProbabilityClasses[randCategory].dirichletSimplexMove(rng, stationaryAlpha);
     updateStationary = true;
@@ -964,6 +1014,8 @@ double Particle::gibbsPartitionMove(double tempering){
     }
 
     updateStationary = true;
+    for(auto& c : currentTransitionProbabilityClasses)
+        c.updated = true;
     currentPhylogeny.updateAll();
 
     delete [] tempCLBuffer;

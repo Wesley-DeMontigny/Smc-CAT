@@ -26,6 +26,11 @@ int main(int argc, char* argv[]){
     Settings settings = Settings(argc, argv);
     #endif
 
+    if(settings.numThreads > omp_get_max_threads()){
+        std::cout << "Error: The number of threads requested is larger than the number of maximum threads available (" << omp_get_max_threads() << ")!" << std::endl;
+        std::exit(1);
+    }
+
     omp_set_num_threads(settings.numThreads);
 
     boost::random::mt19937 rng{settings.seed};

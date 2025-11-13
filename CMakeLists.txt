@@ -7,8 +7,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(USE_UI "Enabled UI" ON)
 option(USE_MIXED_PRECSION "Enabled Mixed Precision" ON)
-option(TIME_PROFILE "Enabled Time Profiling" ON)
-option(DEBUG "Enabled Debug Mode" ON)
+option(TIME_PROFILE "Enabled Time Profiling" OFF)
+option(DEBUG "Enabled Debug Mode" OFF)
 
 include_directories(${PROJECT_SOURCE_DIR})
 
