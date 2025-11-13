@@ -294,6 +294,17 @@ void Particle::writeToSerialized(SerializedParticle& sp){
     sp.baseMatrix = this->getBaseMatrix(); 
     sp.pInvar = this->getPInvar(); 
     sp.shape = this->getShape();
+
+    sp.branchLengths.clear();
+    for(const auto& n : currentPhylogeny.getPostOrder()){
+        if(!n->isRoot)
+            sp.branchLengths.push_back(n->branchLength);
+    }
+
+    sp.categorySize.clear();
+    for(const auto& c : currentTransitionProbabilityClasses){
+        sp.categorySize.push_back(c.members.size());
+    }
 }
 
 std::vector<int> Particle::getAssignments() const {
@@ -371,7 +382,7 @@ void Particle::accept(){
             }
         }
     }
-    else if(updateNNI || updateAdaptiveNNI){
+    else if(updateNNI || updateAdaptiveNNI || updateSPR){
         oldPhylogeny = currentPhylogeny;
     }
 
@@ -384,6 +395,7 @@ void Particle::accept(){
 
     updateStationary = false;
     updateNNI = false;
+    updateSPR = false;
     updateAdaptiveNNI = false;
     updateBranchLength = false;
     updateScaleSubtree = false;
@@ -442,7 +454,7 @@ void Particle::reject(){
             }
         }
     }
-    else if(updateNNI || updateAdaptiveNNI){
+    else if(updateNNI || updateAdaptiveNNI || updateSPR){
         currentPhylogeny = oldPhylogeny;
     }
 
@@ -455,6 +467,7 @@ void Particle::reject(){
 
     updateStationary = false;
     updateNNI = false;
+    updateSPR = false;
     updateAdaptiveNNI = false;
     updateBranchLength = false;
     updateBranchLength = false;
@@ -480,7 +493,8 @@ double Particle::lnPrior(){
     lnP += std::log(boost::math::pdf(boost::math::gamma_distribution<double>(shape, 1.0/treeRate), lengthSum));
 
     // Shape Prior
-    lnP += std::log(boost::math::pdf(boost::math::gamma_distribution<double>(3.0, 2.0), currentShape));
+    if(numRates > 1)
+        lnP += std::log(boost::math::pdf(boost::math::gamma_distribution<double>(3.0, 2.0), currentShape));
 
     if(usingLG){
         // Rate Matrix Prior (This will only work for concentration of 2.0 for now)
@@ -664,13 +678,19 @@ void Particle::refreshLikelihood(bool forceUpdate){
 double Particle::topologyMove(const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosterior){
     double hastings = 0.0;
 
-    if(boost::random::uniform_01<double>{}(rng) < 0.5){
+    double randomMove = boost::random::uniform_01<double>{}(rng);
+
+    if(randomMove < 0.2){
         hastings = currentPhylogeny.NNIMove(rng);
         updateNNI = true;
     }
-    else{
+    else if(randomMove < 0.8){
         hastings = currentPhylogeny.adaptiveNNIMove(rng, aNNIEpsilon, splitPosterior);
         updateAdaptiveNNI = true;
+    }
+    else{
+        hastings = currentPhylogeny.SPRMove(rng);
+        updateSPR = true;
     }
 
     return hastings;
@@ -696,62 +716,42 @@ double Particle::rateMatrixMove(){
     boost::random::uniform_01<double> unif{};
     double hastings = 0.0;
 
-    int numElementsToUpdate = 30;
+    int randomIndex = static_cast<int>(coordVec.size() * unif(rng));
+    std::pair<int,int>& coordinateToUpdate = coordVec[randomIndex];
 
-    std::vector<std::pair<int,int>> coordinatesToUpdate;
-    std::vector<size_t> tmpV;
-    for (int i = 0; i < numElementsToUpdate; i++) {
-        int randomIndex = static_cast<int>(coordVec.size() * unif(rng));
-        coordinatesToUpdate.push_back(coordVec[randomIndex]);
-        coordVec.erase(coordVec.begin() + randomIndex);
-    }
-        
-    std::vector<double> x(numElementsToUpdate+1, 0.0);
-    std::vector<double> alphaForward(numElementsToUpdate+1, 0.0);
-    std::vector<double> alphaReverse(numElementsToUpdate+1, 0.0);
-    std::vector<double> z(numElementsToUpdate+1, 0.0);
+    double concentration = rateMatrixAlpha(randomIndex);
+    double currentValue = (*currentBaseMatrix)(coordinateToUpdate.first, coordinateToUpdate.second);
 
-    for(int i = 0; i < numElementsToUpdate; i++){
-        auto& coord = coordinatesToUpdate[i];
-        x[i] = (*currentBaseMatrix)(coord.first, coord.second);
-    }
-    for(auto& coord : coordVec){
-        x[numElementsToUpdate] += (*currentBaseMatrix)(coord.first, coord.second);
-    }
-        
-    double total = 0.0;
-    for(int i = 0; i < x.size(); i++){
-        alphaForward[i] = (x[i] * rateMatrixAlpha) + 1.0;
-        double randomGamma = boost::random::gamma_distribution{alphaForward[i], 1.0}(rng);
-        z[i] = randomGamma;
-        total += randomGamma;
-    }
-    for(int i = 0; i < x.size(); i++){
-        z[i] /= total;
-    }
+    double a = concentration + 1.0;
+    double b = concentration / currentValue - a + 2.0;
+    boost::random::beta_distribution<double> forwardDist{a, b};
+    boost::math::beta_distribution<double> forwardDensity{a, b};
+    double newValue = forwardDist(rng);
+    (*currentBaseMatrix)(coordinateToUpdate.first, coordinateToUpdate.second) = newValue;
 
-    // Change values in the rate matrix
-    double factor = z[z.size()-1] / x[x.size()-1];
-    for(int i = 0; i < numElementsToUpdate; i++){
-        auto& [c1, c2] = coordinatesToUpdate[i];
-        (*currentBaseMatrix)(c1, c2) = z[i];
-        (*currentBaseMatrix)(c2, c1) = (*currentBaseMatrix)(c1, c2);
-    }
-    for(auto& [c1, c2] : coordVec){
-        (*currentBaseMatrix)(c1, c2) *= factor;
-        (*currentBaseMatrix)(c2, c1) = (*currentBaseMatrix)(c1, c2);
-    }
-        
-    for(int i = 0; i < z.size(); i++){
-        alphaReverse[i] = (z[i] * rateMatrixAlpha) + 1.0;
+    double newB = concentration / newValue - a + 2.0;
+    boost::math::beta_distribution<double> reverseDensity{a, newB};
+
+    hastings += std::log(boost::math::pdf(reverseDensity, currentValue)) - std::log(boost::math::pdf(forwardDensity, newValue));
+
+    double scaling = (1.0 - newValue) / (1.0 - currentValue);
+
+    double sum = 0.0;
+    for(auto& c : coordVec){
+        if(c != coordinateToUpdate){
+            (*currentBaseMatrix)(c.first, c.second) *= scaling;
+        }
+
+        if((*currentBaseMatrix)(c.first, c.second) < 1e-30){
+            return -INFINITY;
+        }
+
+        sum += (*currentBaseMatrix)(c.first, c.second);
     }
 
-    for(int i = 0; i < x.size(); i++){
-        hastings += (alphaReverse[i] - 1.0) * std::log(x[i]);
-        hastings -= (alphaForward[i] - 1.0) * std::log(z[i]);
-    }
-    hastings += (190 - numElementsToUpdate - 1) * log(factor);
+    *currentBaseMatrix /= sum;
 
+    hastings += 188 * std::log(scaling) - 189 * std::log(sum);
 
     updateRateMatrix = true;
     currentPhylogeny.updateAll();
@@ -762,7 +762,7 @@ double Particle::rateMatrixMove(){
 double Particle::stationaryMove(){
     int randCategory = (int)(boost::random::uniform_01<double>{}(rng) * currentTransitionProbabilityClasses.size());
 
-    double hastings = currentTransitionProbabilityClasses[randCategory].dirichletSimplexMove(rng, stationaryAlpha);
+    double hastings = currentTransitionProbabilityClasses[randCategory].simplexMove(rng, stationaryAlpha);
     updateStationary = true;
     currentPhylogeny.updateAll();
 

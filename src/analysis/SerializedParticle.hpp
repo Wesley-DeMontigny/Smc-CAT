@@ -7,7 +7,9 @@
 */
 struct SerializedParticle {
     std::string newick;
+    std::vector<double> branchLengths; // This is redundant with the Newick, but allows us to tune proposals
     std::vector<int> assignments;
+    std::vector<int> categorySize;
     std::vector<Eigen::Vector<double, 20>> stationaries;
     Eigen::Matrix<double, 20, 20> baseMatrix;
     double pInvar;

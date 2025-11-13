@@ -52,12 +52,12 @@ class Particle {
         void setInvariance(double i) { currentPInvar = i; }
         void writeToSerialized(SerializedParticle& sp);
 
-        double aNNIEpsilon = 0.001; // The offset for probabilities in the adaptive NNI. This can be thought of as the probability of selecting an edge with posterior of 1.0
+        double aNNIEpsilon = 0.01; // The offset for probabilities in the adaptive NNI. This can be thought of as the probability of selecting an edge with posterior of 1.0
         double shapeDelta = 1.0; // Delta to scale the shape of the gamma distribution
         double scaleDelta = 1.0; // Delta to scale an individual branch length
         double subtreeScaleDelta = 1.0; // Delta to scale whole subtrees
-        double stationaryAlpha = 1000.0; // Concentration parameter for dirichlet simplex proposals on the stationary
-        double rateMatrixAlpha = 1000.0; // Concentration parameter the dirichlet simplex proposals on the rate matrix
+        double stationaryAlpha = 100.0; // Concentration parameter for beta simplex proposals on the stationary
+        Eigen::Vector<double, 190> rateMatrixAlpha = Eigen::Vector<double, 190>::Ones() * 100; // Concentration parameter the beta simplex proposals on the rate matrix
         double invarAlpha = 100.0; // Concentration parameter for the beta simplex proposals on invar
     private:
         Alignment& aln;
@@ -68,6 +68,7 @@ class Particle {
         bool updateRate = false;
         bool updateRateMatrix = false;
         bool updateScaleSubtree = false;
+        bool updateSPR = false;
         bool updateStationary = false;
         bool usingLG;
         boost::random::mt19937 rng;

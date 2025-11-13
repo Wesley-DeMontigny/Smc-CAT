@@ -8,6 +8,7 @@
 #include <boost/accumulators/accumulators.hpp>
 #include <boost/accumulators/statistics.hpp>
 #include <boost/accumulators/statistics/weighted_mean.hpp>
+#include <boost/accumulators/statistics/variance.hpp>
 #include <boost/dynamic_bitset.hpp>
 #include <boost/random/mersenne_twister.hpp>
 #include <boost/random/uniform_01.hpp>
@@ -114,6 +115,8 @@ int main(int argc, char* argv[]){
     }
     mcmc.initMoveProbs();
 
+    auto rateMatrixCoords = RateMatrices::contructLowerTriangleCoordinates();
+
     std::vector<Particle> particles;
 
     std::chrono::steady_clock::time_point preAnalysis = std::chrono::steady_clock::now();
@@ -141,10 +144,9 @@ int main(int argc, char* argv[]){
     Particle& initP = particles[0];
     for(int n = 0; n < settings.numParticles; n++){  
         rawLogLikelihoods[n] = initP.lnLikelihood();
-        currentSerializedParticles.emplace_back(
-            initP.getNewick(), initP.getAssignments(), initP.getCategories(),
-            initP.getBaseMatrix(), initP.getPInvar(), initP.getShape()
-        );
+        SerializedParticle newParticle{};
+        initP.writeToSerialized(newParticle);
+        currentSerializedParticles.emplace_back(std::move(newParticle));
         particleSplits[n] = initP.getSplitSet();
         initP.initialize(settings.invar);
     }
@@ -162,11 +164,23 @@ int main(int argc, char* argv[]){
 
         std::cout << iteration << "\tTemp: " << currentTemp << "\tESS: " << ESS << std::endl;
 
-        computeSplitPosteriors(
-            splitPosteriorProbabilities,
-            normalizedWeights,
-            particleSplits
-        );
+        if(std::isnan(ESS)){
+            std::cout << "Error: We have run into a NaN ESS! This usually happens when something has failed when computing the likelihoods." << std::endl;
+            for(int l = 0; l < rawLogLikelihoods.size(); l++){
+                if(std::isnan(rawLogLikelihoods[l])){
+                    auto& p = currentSerializedParticles[l];
+                    std::cout << "Found a NaN:          " << l << std::endl;
+                    std::cout << "  Shape:              " << p.shape << std::endl;
+                    std::cout << "  Tree:               " << p.newick << std::endl;
+                    std::cout << "  pInvar:             " << p.pInvar << std::endl;
+                    std::cout << "  Rate Matrix:        " << p.baseMatrix << std::endl;
+                    std::cout << "  Stationary Dists    : " << std::endl;
+                    for(auto& s : p.stationaries)
+                        std::cout << s << std::endl;
+                }
+            }
+            std::exit(1);
+        }
 
         if(ESS <= rejThreshold && currentTemp != 1.0){
             std::cout << "Resampling Particles..." << std::endl;
@@ -187,6 +201,76 @@ int main(int argc, char* argv[]){
                     if (++k >= settings.numParticles) { k = settings.numParticles - 1; cumulative = 1.0; }
                     else cumulative += normalizedWeights[k];
                 }
+            }
+
+            std::cout << "Tuning MCMC..." << std::endl;
+            using VarAcc = boost::accumulators::accumulator_set<
+                double,
+                boost::accumulators::stats<boost::accumulators::tag::variance>
+            >;
+
+            double aNNIEpsilon = std::pow(1.0 - currentTemp, 2.0);
+            computeSplitPosteriors(
+                splitPosteriorProbabilities,
+                assignments,
+                particleSplits
+            );
+
+            VarAcc rateVar{};
+            double shapeDelta = 0.6;
+            VarAcc branchVar{};
+            double scaleDelta = 1.0;
+            double pInvarMean = 0.0;
+            double invarAlpha = 0.6;
+            double stationaryAlpha = 20.0;
+            double meanStationaryVariance = 0.0;
+            Eigen::Vector<double, 190> rateMatrixAlpha;
+            Eigen::Vector<double, 190> meanRateMatrix;
+            std::fill(meanRateMatrix.begin(), meanRateMatrix.end(), 0.0);
+            std::fill(rateMatrixAlpha.begin(), rateMatrixAlpha.end(), 0.0);
+            for(const auto& p : assignments){
+                auto& particle = currentSerializedParticles[p];
+
+                rateVar(std::log(particle.shape));
+                pInvarMean += particle.pInvar;
+
+                for(const auto& l : particle.branchLengths){
+                    branchVar(std::log(l));
+                }
+
+                for(int cat = 0; cat < particle.stationaries.size(); cat++){
+                    auto category = particle.stationaries[cat];
+                    double catMeanVariance = 0.0;
+                    for(int d = 0; d < 20; d++){
+                        catMeanVariance += category[d] * (1.0 - category[d]);
+                    }
+                    catMeanVariance *= static_cast<double>(particle.categorySize[cat])/static_cast<double>(numChar);
+                    catMeanVariance /= 20.0;
+                    meanStationaryVariance += catMeanVariance;
+                }
+
+                for(int c = 0; c < rateMatrixCoords.size(); c++){
+                    auto& [c1, c2] = rateMatrixCoords[c];
+                    double val = particle.baseMatrix(c1, c2);
+                    meanRateMatrix[c] += (1.0 - val) * val;
+                }
+            }
+            meanStationaryVariance /= static_cast<double>(assignments.size());
+            meanRateMatrix /= static_cast<double>(assignments.size());
+
+            pInvarMean /= static_cast<double>(assignments.size());
+            shapeDelta *= std::sqrt(boost::accumulators::variance(rateVar));
+            scaleDelta *= std::sqrt(boost::accumulators::variance(branchVar));
+            invarAlpha *= 1.0 / ((1.0 - pInvarMean)*pInvarMean); // Beta variance under the mean parameter
+            stationaryAlpha /= meanStationaryVariance;
+            rateMatrixAlpha = 190 / meanRateMatrix.array();
+
+            for(auto& p : particles){
+                p.aNNIEpsilon = aNNIEpsilon;
+                p.shapeDelta = shapeDelta;
+                p.scaleDelta = scaleDelta * 0.6;
+                p.subtreeScaleDelta = scaleDelta * 0.3; // I feel ike its okay to set this to be based on the branch variance? I am making it slightly more conservative of a proposal
+                p.invarAlpha = invarAlpha;
             }
 
             // Mutate particles after resampling
@@ -215,7 +299,13 @@ int main(int argc, char* argv[]){
         lastTemp = currentTemp;
     }
 
-    std::cout << "Computing the Majority Consensus Tree..." << std::endl;
+    computeSplitPosteriors(
+        splitPosteriorProbabilities,
+        normalizedWeights,
+        particleSplits
+    );
+
+    std::cout << "Computing the Greedy Consensus Tree..." << std::endl;
     std::vector<std::pair<boost::dynamic_bitset<>, double>> sortedSplits(
         splitPosteriorProbabilities.begin(),
         splitPosteriorProbabilities.end()

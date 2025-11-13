@@ -25,6 +25,13 @@ struct TreeNode {
 
     bool updateCL;
     bool updateTP;
+
+    bool isInSubtree(TreeNode* r) {
+        if (this == r) return true;
+        for (auto* c : r->descendants)
+            if (this->isInSubtree(c)) return true;
+        return false;
+    }
 };
 
 /**
@@ -49,6 +56,7 @@ class Tree {
         double NNIMove(boost::random::mt19937& rng);
         double scaleBranchMove(boost::random::mt19937& rng, double delta);
         double scaleSubtreeMove(boost::random::mt19937& rng, double delta);
+        double SPRMove(boost::random::mt19937& rng);
         std::set<boost::dynamic_bitset<>> getSplitSet() const;
         std::string generateNewick() const; // Generates a Newick string for the tree. Assumes the post-order is correct.
         std::string generateNewick(const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosteriorProbabilities) const;

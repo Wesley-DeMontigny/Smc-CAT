@@ -1,5 +1,8 @@
 #include "TransitionProbabilityClass.hpp"
 #include <boost/random/gamma_distribution.hpp>
+#include <boost/random/beta_distribution.hpp>
+#include <boost/math/distributions/beta.hpp>
+#include <boost/math/distributions.hpp>
 #include <eigen3/Eigen/Eigenvalues>
 #include <iostream>
 
@@ -90,33 +93,45 @@ double TransitionProbabilityClass::lnPrior(){
     );
 }
 
-double TransitionProbabilityClass::dirichletSimplexMove(boost::random::mt19937& rng, double alpha){
-    Eigen::Vector<double, 20> concentrations = stationaryDistribution;
-    concentrations *= alpha;
-    concentrations += Eigen::Vector<double, 20>::Ones();
+double TransitionProbabilityClass::simplexMove(boost::random::mt19937& rng, double alpha){
+    boost::random::uniform_01<double> unif{};
+    double hastings = 0.0;
 
-    Eigen::Vector<double, 20> newStationaryDistribution = sampleStationary(rng, concentrations);
+    int randomIndex = static_cast<int>(unif(rng) * 20);
+    double currentValue = stationaryDistribution(randomIndex);
 
-    Eigen::Vector<double, 20> revConcentrations = newStationaryDistribution;
-    revConcentrations *= alpha;
-    revConcentrations += Eigen::Vector<double, 20>::Ones();
+    double a = alpha + 1.0;
+    double b = alpha / currentValue - a + 2.0;
+    boost::random::beta_distribution<double> forwardDist{a, b};
+    boost::math::beta_distribution<double> forwardDensity{a, b};
+    double newValue = forwardDist(rng);
+    stationaryDistribution(randomIndex) = newValue;
 
-    double forward = stationarylnPdf(concentrations, newStationaryDistribution);
-    double backward = stationarylnPdf(revConcentrations, stationaryDistribution);
+    double newB = alpha / newValue - a + 2.0;
+    boost::math::beta_distribution<double> reverseDensity{a, newB};
 
-    stationaryDistribution = newStationaryDistribution;
-    double total = stationaryDistribution.sum();
+    hastings += std::log(boost::math::pdf(reverseDensity, currentValue)) - std::log(boost::math::pdf(forwardDensity, newValue));
 
-    // To stop drift from summing up to 1.0
-    for(int i = 0; i < 20; i++) {
-        stationaryDistribution(i) = stationaryDistribution(i)/total;
+    double scaling = (1.0 - newValue) / (1.0 - currentValue);
 
-        if(stationaryDistribution(i) < 1E-6) {
-            return -1 * INFINITY;
+    double sum = 0.0;
+    for(int i = 0; i < 20; i++){
+        if(i != randomIndex){
+            stationaryDistribution(i) *= scaling;
         }
+
+        if(stationaryDistribution(i) < 1e-30){
+            return -INFINITY;
+        }
+
+        sum += stationaryDistribution(i);
     }
+
+    stationaryDistribution /= sum;
 
     updated = true;
 
-    return backward - forward;
+    hastings += 18 * std::log(scaling) - 19 * std::log(sum);
+
+    return hastings;
 }

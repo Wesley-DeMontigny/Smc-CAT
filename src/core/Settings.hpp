@@ -16,8 +16,8 @@ struct Settings {
 
     void usage();
 
-    int numParticles = 500;
-    int rejuvenationIterations = 3;
+    int numParticles = 250;
+    int rejuvenationIterations = 5;
     int numThreads = 10;
     bool invar = false;
     bool lg = false;

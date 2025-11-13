@@ -764,3 +764,50 @@ double Tree::adaptiveNNIMove(boost::random::mt19937& rng, double epsilon, const 
 
     return std::log(revProb) - std::log(selectedProb);
 }
+
+double Tree::SPRMove(boost::random::mt19937& rng) {
+    boost::random::uniform_01<double> unif{};
+
+    TreeNode* p = nullptr;
+    do {
+        p = nodes[static_cast<int>(unif(rng) * nodes.size())].get();
+    } while (p == root || p->isTip);
+
+    std::set<TreeNode*> children = p->descendants;
+    TreeNode* s = chooseNodeFromSet(rng, children);
+
+    TreeNode* parentP = p->ancestor;
+    TreeNode* sibling = nullptr; // Here we are assuming a strictly binary tree
+    for (auto* c : p->descendants) {
+        if (c != s) sibling = c;
+    }
+
+    TreeNode* a = nullptr; // Select attachment point
+    do {
+        a = nodes[static_cast<int>(unif(rng) * nodes.size())].get();
+    } while (a->isInSubtree(p) || a == root);
+    TreeNode* aParent = a->ancestor;
+
+    p->descendants.erase(sibling); // Pick up subtree by p
+    sibling->ancestor = p->ancestor;
+    p->ancestor->descendants.insert(sibling);
+    p->ancestor->descendants.erase(p);
+    p->ancestor = nullptr;
+
+    // Attach the subtree
+    p->ancestor = aParent;
+    aParent->descendants.erase(a);
+    aParent->descendants.insert(p);
+    p->descendants.insert(a);
+    a->ancestor = p;
+
+    TreeNode* q = p;
+    while (q != nullptr) {
+        q->updateCL = true;
+        q = q->ancestor;
+    }
+
+    regeneratePostOrder();
+
+    return 0.0;
+}

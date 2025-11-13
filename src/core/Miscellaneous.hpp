@@ -128,6 +128,28 @@ inline void computeSplitPosteriors(std::unordered_map<boost::dynamic_bitset<>, d
     }
 }
 
+/**
+ * @brief 
+ * 
+ */
+inline void computeSplitPosteriors(std::unordered_map<boost::dynamic_bitset<>, double>& splitPosteriorProbabilities, 
+                            const std::vector<int>& assignments,
+                            const std::vector<std::set<boost::dynamic_bitset<>>>& particleSplits){
+    splitPosteriorProbabilities.clear();
+    double weight = 1.0 / static_cast<double>(assignments.size());
+    for(const auto& n : assignments){
+        for(boost::dynamic_bitset<> split : particleSplits[n]){
+            if (splitPosteriorProbabilities.count(split)) {
+                splitPosteriorProbabilities[split] += weight;
+            }
+            else {
+                splitPosteriorProbabilities[split] = weight;
+            }
+        }
+    }
+}
+
+
 
 
 #endif
