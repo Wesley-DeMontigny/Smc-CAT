@@ -29,12 +29,6 @@ Eigen::Vector<double, 20> TransitionProbabilityClass::sampleStationary(boost::ra
         denom += randGamma;
     }
 
-    for(int i = 0; i < 20; i++){
-        if(stationaryDistribution(i) / denom == 0){
-            std::cout << "This aint right" << std::endl;
-        }
-    }
-
     return stationaryDistribution / denom;
 }
 
