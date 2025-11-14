@@ -267,10 +267,12 @@ int main(int argc, char* argv[]){
 
             for(auto& p : particles){
                 p.aNNIEpsilon = aNNIEpsilon;
-                p.shapeDelta = shapeDelta;
-                p.scaleDelta = scaleDelta * 0.6;
-                p.subtreeScaleDelta = scaleDelta * 0.3; // I feel ike its okay to set this to be based on the branch variance? I am making it slightly more conservative of a proposal
+                p.shapeDelta = std::max(shapeDelta, 0.2);
+                p.scaleDelta = std::max(scaleDelta * 0.6, 0.2);
+                p.subtreeScaleDelta = std::max(scaleDelta * 0.3, 0.2); // I feel ike its okay to set this to be based on the branch variance? I am making it slightly more conservative of a proposal
                 p.invarAlpha = invarAlpha;
+                p.rateMatrixAlpha = rateMatrixAlpha;
+                p.stationaryAlpha = stationaryAlpha;
             }
 
             // Mutate particles after resampling
