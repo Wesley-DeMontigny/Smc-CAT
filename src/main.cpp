@@ -74,7 +74,7 @@ int main(int argc, char* argv[]){
     mcmc.emplaceMove(std::tuple{
         1.0,
         [](Particle& m){
-            return m.getNumCategories() * 2;
+            return m.getNumCategories() * 5;
         },
         [](Particle& m){
             return m.stationaryMove();
@@ -106,7 +106,7 @@ int main(int argc, char* argv[]){
         mcmc.emplaceMove(std::tuple{
             1.0,
             [](Particle& m){
-                return 10;
+                return 30;
             },
             [](Particle& m){
                 return m.rateMatrixMove();
@@ -153,6 +153,9 @@ int main(int argc, char* argv[]){
     oldSerializedParticles = currentSerializedParticles;
     std::cout << "Initialized Particles..." << std::endl;
 
+    std::array<double, 10> moveCount{};
+    std::array<double, 10> acceptCount{};
+    
     // SMC algorithm
     std::cout << "Starting SMC..." << std::endl;
     double rejThreshold = settings.rejuvenationThreshold * settings.numParticles;
@@ -209,7 +212,6 @@ int main(int argc, char* argv[]){
                 boost::accumulators::stats<boost::accumulators::tag::variance>
             >;
 
-            double aNNIEpsilon = std::pow(1.0 - currentTemp, 2.0);
             computeSplitPosteriors(
                 splitPosteriorProbabilities,
                 assignments,
@@ -217,17 +219,23 @@ int main(int argc, char* argv[]){
             );
 
             VarAcc rateVar{};
-            double shapeDelta = 0.6;
+            double shapeDelta = 0.5;
+
             VarAcc branchVar{};
             double scaleDelta = 1.0;
+
+            VarAcc stationaryVar{};
+            double stationaryDelta = 1.0;
+
             double pInvarMean = 0.0;
-            double invarAlpha = 0.6;
-            double stationaryAlpha = 20.0;
-            double meanStationaryVariance = 0.0;
-            Eigen::Vector<double, 190> rateMatrixAlpha;
-            Eigen::Vector<double, 190> meanRateMatrix;
-            std::fill(meanRateMatrix.begin(), meanRateMatrix.end(), 0.0);
-            std::fill(rateMatrixAlpha.begin(), rateMatrixAlpha.end(), 0.0);
+            double invarAlpha = 0.5;
+
+            Eigen::MatrixXd rateSampleMatrix(settings.numParticles, 190);
+            Eigen::MatrixXd rateMatrixCovariance(190, 190);
+            Eigen::MatrixXd rateMatrixCholesky{};
+            double shrinkageDiagonal = 0.0;
+
+            int index = 0;
             for(const auto& p : assignments){
                 auto& particle = currentSerializedParticles[p];
 
@@ -238,47 +246,67 @@ int main(int argc, char* argv[]){
                     branchVar(std::log(l));
                 }
 
-                for(int cat = 0; cat < particle.stationaries.size(); cat++){
-                    auto category = particle.stationaries[cat];
-                    double catMeanVariance = 0.0;
+                for(const auto& s : particle.stationaries){
                     for(int d = 0; d < 20; d++){
-                        catMeanVariance += category[d] * (1.0 - category[d]);
+                        stationaryVar(s[d]);
                     }
-                    catMeanVariance *= static_cast<double>(particle.categorySize[cat])/static_cast<double>(numChar);
-                    catMeanVariance /= 20.0;
-                    meanStationaryVariance += catMeanVariance;
                 }
 
-                for(int c = 0; c < rateMatrixCoords.size(); c++){
-                    auto& [c1, c2] = rateMatrixCoords[c];
-                    double val = particle.baseMatrix(c1, c2);
-                    meanRateMatrix[c] += (1.0 - val) * val;
+                if(!settings.lg){
+                    for(int d = 0; d < 190; d++){
+                        rateSampleMatrix(index, d) = particle.baseMatrix(d);
+                    }
                 }
+
+                index++;
             }
-            meanStationaryVariance /= static_cast<double>(assignments.size());
-            meanRateMatrix /= static_cast<double>(assignments.size());
+            if(!settings.lg){
+                rateMatrixCovariance = rateSampleMatrix.transpose() * rateSampleMatrix;
+                rateMatrixCovariance *= (2.38 * 2.38) / 190.0; // Roberts, Gelman & Gilks
+                rateMatrixCovariance *= 0.21; // Make the proposal just a little bit more conservative
+                double shrinkageFactor = 0.2;
+                for(int d = 0; d < 190; d++){
+                    shrinkageDiagonal += rateMatrixCovariance(d,d);
+                }
+                shrinkageDiagonal /= 190.0;
+                shrinkageDiagonal *= shrinkageFactor;
+                rateMatrixCovariance *= 1.0 - shrinkageFactor;
+
+                for(int d = 0; d < 190; d++){
+                    rateMatrixCovariance(d,d) += shrinkageDiagonal; // Apply shrinkage to \lambda I v
+                    rateMatrixCovariance(d,d) += 1e-6; // For stablibility
+                }
+
+                Eigen::LLT<Eigen::MatrixXd> chol(rateMatrixCovariance);
+                if(chol.info() != Eigen::Success) {
+                    std::cout << rateMatrixCovariance << std::endl;
+                    std::cout << "Failed to Form Cholesky Factors for Rate Matrix Covariance!" << std::endl;
+                    std::exit(1);
+                }
+                rateMatrixCholesky = chol.matrixL();
+            }
 
             pInvarMean /= static_cast<double>(assignments.size());
-            shapeDelta *= std::sqrt(boost::accumulators::variance(rateVar));
-            scaleDelta *= std::sqrt(boost::accumulators::variance(branchVar));
-            invarAlpha *= 1.0 / ((1.0 - pInvarMean)*pInvarMean); // Beta variance under the mean parameter
-            stationaryAlpha /= meanStationaryVariance;
-            rateMatrixAlpha = 190 / meanRateMatrix.array();
+            shapeDelta *= boost::accumulators::variance(rateVar);
+            scaleDelta *= boost::accumulators::variance(branchVar);
+            stationaryDelta *= boost::accumulators::variance(stationaryVar);
 
             for(auto& p : particles){
-                p.aNNIEpsilon = aNNIEpsilon;
-                p.shapeDelta = std::max(shapeDelta, 0.2);
-                p.scaleDelta = std::max(scaleDelta * 0.6, 0.2);
-                p.subtreeScaleDelta = std::max(scaleDelta * 0.3, 0.2); // I feel ike its okay to set this to be based on the branch variance? I am making it slightly more conservative of a proposal
+                p.shapeDelta = std::max(shapeDelta, 0.01);
+                p.scaleDelta = std::max(scaleDelta, 0.01);
+                p.subtreeScaleDelta = std::max(scaleDelta, 0.01);
+                p.stationaryDelta = std::max(stationaryDelta, 0.01);
                 p.invarAlpha = invarAlpha;
-                p.rateMatrixAlpha = rateMatrixAlpha;
-                p.stationaryAlpha = stationaryAlpha;
+                if(!settings.lg){
+                    p.rateMatrixDelta = std::max(shrinkageDiagonal, 0.01);
+                    p.rateMatrixCholesky = rateMatrixCholesky;
+                }
             }
 
             // Mutate particles after resampling
             std::cout << "Rejuvenating Particles..." << std::endl;
             #pragma omp parallel for schedule(dynamic)
-            for (int n = 0; n < settings.numParticles; n++) {
+            for(int n = 0; n < settings.numParticles; n++){
                 int threadID = omp_get_thread_num();
                 Particle& p = particles[threadID];
                 int particleID = assignments[n];
@@ -296,6 +324,25 @@ int main(int argc, char* argv[]){
                 particleSplits[n] = p.getSplitSet();
             }
             std::swap(currentSerializedParticles, oldSerializedParticles);
+           
+            std::fill(moveCount.begin(), moveCount.end(), 0);
+            std::fill(acceptCount.begin(), acceptCount.end(), 0);
+            for(auto& p : particles){
+                for(int m = 0; m < moveCount.size(); m++){
+                    moveCount[m] += p.moveCount[m];
+                    acceptCount[m] += p.acceptCount[m];
+                }
+            }
+
+            for(int m = 0; m < moveCount.size(); m++){
+                std::cout << MoveNames[m] << " Acceptance Rate: " << (double)acceptCount[m]/(double)moveCount[m];
+                if(m != moveCount.size() - 1){
+                    std::cout << "\t";
+                }
+                else{
+                    std::cout << std::endl;
+                }
+            }
         }
 
         lastTemp = currentTemp;

@@ -22,7 +22,7 @@ struct Settings {
     bool invar = false;
     bool lg = false;
     double alg8Probability = 0.1;
-    double rejuvenationThreshold = 0.6;
+    double rejuvenationThreshold = 0.5;
     int numRates = 1;
     unsigned int seed = 1;
     std::string fastaFile = "/workspaces/FastCAT/local_testing/globin_aa_aligned.fasta"; 

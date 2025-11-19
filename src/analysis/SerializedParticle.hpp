@@ -11,7 +11,7 @@ struct SerializedParticle {
     std::vector<int> assignments;
     std::vector<int> categorySize;
     std::vector<Eigen::Vector<double, 20>> stationaries;
-    Eigen::Matrix<double, 20, 20> baseMatrix;
+    Eigen::Vector<double, 190> baseMatrix;
     double pInvar;
     double shape;
 };

@@ -5,7 +5,7 @@
 #include "Tree.hpp"
 #include <boost/math/distributions.hpp>
 #include <boost/random/beta_distribution.hpp>
-#include <boost/random/gamma_distribution.hpp>
+#include <boost/random/normal_distribution.hpp>
 #include <boost/random/uniform_real.hpp>
 #include <cmath>
 #include <filesystem>
@@ -72,34 +72,41 @@ Particle::Particle(int seed, Alignment& aln, int nR, bool initInvar, bool lg) :
         }
     }
 
+    std::fill(moveCount.begin(), moveCount.end(), 0);
+    std::fill(acceptCount.begin(), acceptCount.end(), 0);
+
     initialize(initInvar);
 }
 
 void Particle::initialize(bool initInvar){
     // Construct rate matrix
+    auto coords = RateMatrices::contructLowerTriangleCoordinates();
     if(usingLG){
-        currentBaseMatrix = std::unique_ptr<Eigen::Matrix<double, 20, 20>>(new Eigen::Matrix<double, 20, 20>{RateMatrices::constructLG()});
-        oldBaseMatrix = std::unique_ptr<Eigen::Matrix<double, 20, 20>>(new Eigen::Matrix<double, 20, 20>{*currentBaseMatrix});
+        auto lg = RateMatrices::constructLG();
+        Eigen::Vector<double, 190> lgVector = Eigen::Vector<double, 190>::Zero();
+        for(int c  = 0; c < coords.size(); c++){
+            const auto& [c1, c2] = coords[c];
+            lgVector(c) = lg(c1, c2);
+        }
+
+        currentBaseMatrix = std::unique_ptr<Eigen::Vector<double, 190>>(new Eigen::Vector<double, 190>(lgVector));
+        oldBaseMatrix = std::unique_ptr<Eigen::Vector<double, 190>>(new Eigen::Vector<double, 190>{*currentBaseMatrix});
     }
     else {
-        currentBaseMatrix = std::unique_ptr<Eigen::Matrix<double, 20, 20>>(new Eigen::Matrix<double, 20, 20>{});
+        currentBaseMatrix = std::unique_ptr<Eigen::Vector<double, 190>>(new Eigen::Vector<double, 190>{});
         currentBaseMatrix->setZero();
 
-        auto gammaDist = boost::random::gamma_distribution(2.0, 1.0);
+        auto normalDist = boost::random::normal_distribution(0.0, 1.0);
         auto coords = RateMatrices::contructLowerTriangleCoordinates();
 
         double total = 0.0;
-        for(const auto& [c1, c2] : coords){
-            double newEntry = gammaDist(rng);
+        for(int i = 0; i < 190; i++){
+            double newEntry = normalDist(rng);
             total += newEntry;
-            (*currentBaseMatrix)(c1,c2) = newEntry;
-        }
-        for(const auto& [c1, c2] : coords){
-            (*currentBaseMatrix)(c1,c2) /= total;
-            (*currentBaseMatrix)(c2,c1) = (*currentBaseMatrix)(c1,c2);
+            (*currentBaseMatrix)(i) = newEntry;
         }
 
-        oldBaseMatrix = std::unique_ptr<Eigen::Matrix<double, 20, 20>>(new Eigen::Matrix<double, 20, 20>{*currentBaseMatrix});
+        oldBaseMatrix = std::unique_ptr<Eigen::Vector<double, 190>>(new Eigen::Vector<double, 190>{*currentBaseMatrix});
     }
     
     // We waste a little bit of compute the first time we initilize this particle object by constructing this twice, but it it neglible
@@ -230,7 +237,8 @@ void Particle::copyFromSerialized(SerializedParticle& sp){
         if(i < oldSize){
             TransitionProbabilityClass& cls = currentTransitionProbabilityClasses[i];
 
-            cls.stationaryDistribution = sp.stationaries[i];
+            cls.stationaryLogits = sp.stationaries[i];
+            cls.normalizeStationary();
             *cls.baseMatrix = sp.baseMatrix;
 
             cls.members.clear();
@@ -243,7 +251,8 @@ void Particle::copyFromSerialized(SerializedParticle& sp){
         else{
             TransitionProbabilityClass cls(rng, numNodes, numRates, currentBaseMatrix.get());
 
-            cls.stationaryDistribution = sp.stationaries[i];
+            cls.stationaryLogits = sp.stationaries[i];
+            cls.normalizeStationary();
             *cls.baseMatrix = sp.baseMatrix;
 
             for (size_t m = 0; m < sp.assignments.size(); m++){
@@ -323,7 +332,7 @@ std::vector<Eigen::Vector<double, 20>> Particle::getCategories() const {
     categories.reserve(currentTransitionProbabilityClasses.size());
 
     for(auto& c : currentTransitionProbabilityClasses)
-        categories.push_back(c.stationaryDistribution);
+        categories.push_back(c.stationaryLogits);
 
     return categories;
 }
@@ -344,16 +353,16 @@ void Particle::accept(){
         oldConditionalLikelihoodFlags.get()
     );
     
-    if(updateRate){
+    if(currentMove == UpdateType::RATE_SHAPE){
         oldTransitionProbabilityClasses = currentTransitionProbabilityClasses;
         oldRates = currentRates;
         oldShape = currentShape;
     }
-    else if(updateRateMatrix){
+    else if(currentMove == UpdateType::RATE_MATRIX_FULL){
         *oldBaseMatrix = *currentBaseMatrix;
         oldTransitionProbabilityClasses = currentTransitionProbabilityClasses;
     }
-    else if(updateStationary){
+    else if(currentMove == UpdateType::STATIONARY_SINGLE){
         for(int i = 0; i < currentTransitionProbabilityClasses.size(); i++){
             if(currentTransitionProbabilityClasses[i].updated){
                 currentTransitionProbabilityClasses[i].updated = false;
@@ -361,7 +370,7 @@ void Particle::accept(){
             }
         }
     }
-    else if(updateBranchLength || updateScaleSubtree){ // This implies the post order traversals between new and old are the same
+    else if(currentMove == UpdateType::BRANCH_LENGTH || currentMove == UpdateType::SCALE_SUBTREE){ // This implies the post order traversals between new and old are the same
         auto& postOrder = currentPhylogeny.getPostOrder();
         auto& oldPostOrder = oldPhylogeny.getPostOrder();
         std::vector<TreeNode*> flipNodes;
@@ -382,7 +391,7 @@ void Particle::accept(){
             }
         }
     }
-    else if(updateNNI || updateAdaptiveNNI || updateSPR){
+    else if(currentMove == UpdateType::NNI || currentMove == UpdateType::ADAPTIVE_NNI || currentMove == UpdateType::SPR){
         oldPhylogeny = currentPhylogeny;
     }
 
@@ -393,15 +402,11 @@ void Particle::accept(){
 
     oldPInvar = currentPInvar;
 
-    updateStationary = false;
-    updateNNI = false;
-    updateSPR = false;
-    updateAdaptiveNNI = false;
-    updateBranchLength = false;
-    updateScaleSubtree = false;
-    updateInvar = false;
-    updateRate = false;
-    updateRateMatrix = false;
+    if(currentMove != UpdateType::NO_MOVE){
+        moveCount[currentMove]++;
+        acceptCount[currentMove]++;
+    }
+    currentMove = UpdateType::NO_MOVE;
 }
 
 void Particle::reject(){
@@ -420,23 +425,23 @@ void Particle::reject(){
         currentConditionalLikelihoodFlags.get()
     );
 
-    if(updateRate){
+    if(currentMove == UpdateType::RATE_SHAPE){
         currentTransitionProbabilityClasses = oldTransitionProbabilityClasses;
         currentRates = oldRates;
         currentShape = oldShape;
     }
-    else if(updateRateMatrix){
+    else if(currentMove == UpdateType::RATE_MATRIX_FULL){
         *currentBaseMatrix = *oldBaseMatrix;
         currentTransitionProbabilityClasses = oldTransitionProbabilityClasses;
     }
-    else if(updateStationary){
+    else if(currentMove == UpdateType::STATIONARY_SINGLE){
         for(int i = 0; i < currentTransitionProbabilityClasses.size(); i++){
             if(currentTransitionProbabilityClasses[i].updated){
                 currentTransitionProbabilityClasses[i] = oldTransitionProbabilityClasses[i];
             }
         }
     }
-    else if(updateBranchLength || updateScaleSubtree){ // This implies the post order traversals between new and old are the same
+    else if(currentMove == UpdateType::BRANCH_LENGTH || currentMove == UpdateType::SCALE_SUBTREE){ // This implies the post order traversals between new and old are the same
         std::vector<TreeNode*> flipNodes;
         for(int i = 0; i < postOrder.size(); i++){
             TreeNode* node = postOrder[i];
@@ -454,7 +459,7 @@ void Particle::reject(){
             }
         }
     }
-    else if(updateNNI || updateAdaptiveNNI || updateSPR){
+    else if(currentMove == UpdateType::NNI || currentMove == UpdateType::ADAPTIVE_NNI || currentMove == UpdateType::SPR){
         currentPhylogeny = oldPhylogeny;
     }
 
@@ -465,15 +470,10 @@ void Particle::reject(){
 
     currentPInvar = oldPInvar;
 
-    updateStationary = false;
-    updateNNI = false;
-    updateSPR = false;
-    updateAdaptiveNNI = false;
-    updateBranchLength = false;
-    updateBranchLength = false;
-    updateInvar = false;
-    updateRate = false;
-    updateRateMatrix = false;
+    if(currentMove != UpdateType::NO_MOVE){
+        moveCount[currentMove]++;
+    }
+    currentMove = UpdateType::NO_MOVE;
 }
 
 double Particle::lnLikelihood(){
@@ -496,12 +496,10 @@ double Particle::lnPrior(){
     if(numRates > 1)
         lnP += std::log(boost::math::pdf(boost::math::gamma_distribution<double>(3.0, 2.0), currentShape));
 
-    if(usingLG){
-        // Rate Matrix Prior (This will only work for concentration of 2.0 for now)
-        for (int i = 1; i < 20; i++){
-            for (int j = 0; j < i; j++){
-                lnP += std::log((*currentBaseMatrix)(i,j));
-            }
+    if(!usingLG){
+        boost::math::normal_distribution<double> rateDist(0.0, 1.0);
+        for (int i = 0; i < 190; i++){
+            lnP += std::log(boost::math::pdf(rateDist, (*currentBaseMatrix)(i)));
         }
     }
 
@@ -535,7 +533,7 @@ void Particle::refreshLikelihood(bool forceUpdate){
     std::chrono::steady_clock::time_point preTPUpdate = std::chrono::steady_clock::now();
     #endif
 
-    if(updateStationary || forceUpdate){ // Update all TPs of that class if that was the last move
+    if(currentMove == UpdateType::STATIONARY_SINGLE|| forceUpdate){ // Update all TPs of that class if that was the last move
         for(auto& c : currentTransitionProbabilityClasses){
             if(c.updated || forceUpdate){
                 c.recomputeEigens();
@@ -547,7 +545,7 @@ void Particle::refreshLikelihood(bool forceUpdate){
             }
         }
     }
-    else if(updateBranchLength || updateScaleSubtree || updateRate || updateRateMatrix){ // Update specific branch lengths if that was the last move
+    else if(currentMove == UpdateType::BRANCH_LENGTH || currentMove == UpdateType::SCALE_SUBTREE || currentMove == UpdateType::RATE_SHAPE || currentMove == UpdateType::RATE_MATRIX_FULL){ // Update specific branch lengths if that was the last move
         for(auto n : postOrder){
             if(n->updateTP){
                 for(auto& c : currentTransitionProbabilityClasses){
@@ -682,15 +680,15 @@ double Particle::topologyMove(const std::unordered_map<boost::dynamic_bitset<>, 
 
     if(randomMove < 0.2){
         hastings = currentPhylogeny.NNIMove(rng);
-        updateNNI = true;
+        currentMove = UpdateType::NNI;
     }
     else if(randomMove < 0.8){
         hastings = currentPhylogeny.adaptiveNNIMove(rng, aNNIEpsilon, splitPosterior);
-        updateAdaptiveNNI = true;
+        currentMove = UpdateType::ADAPTIVE_NNI;
     }
     else{
         hastings = currentPhylogeny.SPRMove(rng);
-        updateSPR = true;
+        currentMove = UpdateType::SPR;
     }
 
     return hastings;
@@ -701,69 +699,49 @@ double Particle::branchMove(){
 
     if(boost::random::uniform_01<double>{}(rng) < 0.75){
         hastings = currentPhylogeny.scaleBranchMove(rng, scaleDelta);
-        updateBranchLength = true;
+        currentMove = UpdateType::BRANCH_LENGTH;
     }
     else {
         hastings = currentPhylogeny.scaleSubtreeMove(rng, subtreeScaleDelta);
-        updateScaleSubtree = true;
+        currentMove = UpdateType::SCALE_SUBTREE;
     }
 
     return hastings;
 }
 
 double Particle::rateMatrixMove(){
-    auto coordVec = RateMatrices::contructLowerTriangleCoordinates();
     boost::random::uniform_01<double> unif{};
-    double hastings = 0.0;
+    auto shiftDistribution = boost::random::normal_distribution<double>(0.0, 1.0);
 
-    int randomIndex = static_cast<int>(coordVec.size() * unif(rng));
-    std::pair<int,int>& coordinateToUpdate = coordVec[randomIndex];
-
-    double concentration = rateMatrixAlpha(randomIndex);
-    double currentValue = (*currentBaseMatrix)(coordinateToUpdate.first, coordinateToUpdate.second);
-
-    double a = concentration + 1.0;
-    double b = concentration / currentValue - a + 2.0;
-    boost::random::beta_distribution<double> forwardDist{a, b};
-    boost::math::beta_distribution<double> forwardDensity{a, b};
-    double newValue = forwardDist(rng);
-    (*currentBaseMatrix)(coordinateToUpdate.first, coordinateToUpdate.second) = newValue;
-
-    double newB = concentration / newValue - a + 2.0;
-    boost::math::beta_distribution<double> reverseDensity{a, newB};
-
-    hastings += std::log(boost::math::pdf(reverseDensity, currentValue)) - std::log(boost::math::pdf(forwardDensity, newValue));
-
-    double scaling = (1.0 - newValue) / (1.0 - currentValue);
-
-    double sum = 0.0;
-    for(auto& c : coordVec){
-        if(c != coordinateToUpdate){
-            (*currentBaseMatrix)(c.first, c.second) *= scaling;
+    if(unif(rng) < 0.25){
+        Eigen::Vector<double, 190> standardShift;
+        for(int i = 0; i < 190; i++){
+            standardShift(i) = shiftDistribution(rng);
         }
 
-        if((*currentBaseMatrix)(c.first, c.second) < 1e-30){
-            return -INFINITY;
-        }
+        (*currentBaseMatrix) += rateMatrixCholesky * standardShift;
 
-        sum += (*currentBaseMatrix)(c.first, c.second);
+        currentMove = UpdateType::RATE_MATRIX_FULL;
     }
+    else{
+        int randomIndex = static_cast<int>(190 * unif(rng));
+        double currentValue = (*currentBaseMatrix)(randomIndex);
 
-    *currentBaseMatrix /= sum;
+        double newValue = currentValue + shiftDistribution(rng) * rateMatrixDelta;
+        (*currentBaseMatrix)(randomIndex) = newValue;
 
-    hastings += 188 * std::log(scaling) - 189 * std::log(sum);
-
-    updateRateMatrix = true;
+        currentMove = UpdateType::RATE_MATRIX_SINGLE;
+    }
     currentPhylogeny.updateAll();
 
-    return hastings;
+    return 0.0;
 }
 
 double Particle::stationaryMove(){
     int randCategory = (int)(boost::random::uniform_01<double>{}(rng) * currentTransitionProbabilityClasses.size());
 
-    double hastings = currentTransitionProbabilityClasses[randCategory].simplexMove(rng, stationaryAlpha);
-    updateStationary = true;
+    double hastings = currentTransitionProbabilityClasses[randCategory].stationaryMove(rng, stationaryDelta);
+    currentMove = UpdateType::STATIONARY_SINGLE;
     currentPhylogeny.updateAll();
 
     return hastings;
@@ -788,8 +766,7 @@ double Particle::invarMove(){
     currentPInvar = newPInvar;
     hastings = backward - forward;
 
-
-    updateInvar = true;
+    currentMove = UpdateType::INVAR;
 
     return hastings;
 }
@@ -803,7 +780,7 @@ double Particle::shapeMove(){
     double newV = currentV * scale;
     currentShape = newV;
 
-    updateRate = true;
+    currentMove = UpdateType::RATE_SHAPE;
     currentPhylogeny.updateAll();
     discretizeGamma(currentRates, currentShape, numRates);
     hastings = std::log(scale);
@@ -1013,7 +990,7 @@ double Particle::gibbsPartitionMove(double tempering){
         #endif
     }
 
-    updateStationary = true;
+    currentMove = UpdateType::STATIONARY_SINGLE;
     for(auto& c : currentTransitionProbabilityClasses)
         c.updated = true;
     currentPhylogeny.updateAll();

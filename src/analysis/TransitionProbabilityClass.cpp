@@ -1,12 +1,12 @@
 #include "TransitionProbabilityClass.hpp"
-#include <boost/random/gamma_distribution.hpp>
-#include <boost/random/beta_distribution.hpp>
-#include <boost/math/distributions/beta.hpp>
+#include "RateMatrices.hpp"
+#include <boost/random/normal_distribution.hpp>
+#include <boost/math/distributions/normal.hpp>
 #include <boost/math/distributions.hpp>
 #include <eigen3/Eigen/Eigenvalues>
 #include <iostream>
 
-TransitionProbabilityClass::TransitionProbabilityClass(boost::random::mt19937& rng, int n, int c, Eigen::Matrix<double, 20, 20>* bM) : baseMatrix(bM), updated(false), numRates(c) {
+TransitionProbabilityClass::TransitionProbabilityClass(boost::random::mt19937& rng, int n, int c, Eigen::Vector<double, 190>* bM) : baseMatrix(bM), updated(false), numRates(c) {
     // Initialize a buffer of transition probabilities for each branch
     transitionProbabilities.reserve(n * numRates);
     for(int i = 0; i < n * numRates; i++){
@@ -19,38 +19,46 @@ TransitionProbabilityClass::TransitionProbabilityClass(boost::random::mt19937& r
     workingMatrix2 = Eigen::Matrix<Eigen::dcomplex, 20, 20>::Zero();
     workingDiag = Eigen::DiagonalMatrix<Eigen::dcomplex, 20>{};
 
-    stationaryDistribution = sampleStationary(rng, Eigen::Vector<double, 20>::Ones() * 5.0);
+    stationaryLogits = sampleStationaryLogits(rng);
+    normalizeStationary();
 }
 
-Eigen::Vector<double, 20> TransitionProbabilityClass::sampleStationary(boost::random::mt19937& rng, const Eigen::Vector<double, 20>& alpha){
+Eigen::Vector<double, 20> TransitionProbabilityClass::sampleStationaryLogits(boost::random::mt19937& rng){
     Eigen::Vector<double, 20> stationaryDistribution = Eigen::Vector<double, 20>::Zero();
 
-    double denom = 0.0;
-    for (size_t i = 0; i < 20; ++i) {
-        double randGamma = boost::random::gamma_distribution<double>{alpha(i), 1.0}(rng);
-        stationaryDistribution(i) = randGamma;
-        denom += randGamma;
+    for (size_t i = 0; i < 19; ++i) {
+        double randLogit = boost::random::normal_distribution<double>{0.0, 1.0}(rng);
+        stationaryDistribution(i) = randLogit;
     }
 
-    return stationaryDistribution / denom;
+    return stationaryDistribution;
 }
 
-double TransitionProbabilityClass::stationarylnPdf(const Eigen::Vector<double, 20>& alpha, 
-                                                   const Eigen::Vector<double, 20>& x) {
-    double alpha0 = alpha.sum();
-    double lnPdf = std::lgamma(alpha0);
+/**
+ * TODO: Optionally allow for dirichlet prior. The mapping from logit to simplex has a log jacobian determinant factor of sum(log(x_i)) where x_i is the simplex value
+ */
+double TransitionProbabilityClass::stationarylnPdf(const Eigen::Vector<double, 20>& x) {
+    boost::math::normal_distribution<double> standard_normal{};
 
-    for(int i = 0; i < 20; i++){
-        lnPdf -= std::lgamma(alpha[i]);
-        lnPdf += (alpha[i] - 1.0) * std::log(x[i]);
-    }
+    double lnPdf = 0.0;
+    for(const auto& z : x)
+        lnPdf += std::log(boost::math::pdf(standard_normal, z));
+
     return lnPdf;
 }
 
-
 void TransitionProbabilityClass::recomputeEigens(){
-    Eigen::Matrix<double,20,20> Q = (*baseMatrix) * stationaryDistribution.asDiagonal();
+    Eigen::Matrix<double,20,20> Q = Eigen::Matrix<double,20,20>::Zero();
+    const auto& coords = RateMatrices::contructLowerTriangleCoordinates();
 
+    for(int c = 0; c < coords.size(); c++){
+        const auto& [c1, c2] = coords[c];
+        Q(c1,c2) = std::exp((*baseMatrix)(c));
+        Q(c2,c1) = Q(c1, c2);
+    }
+
+    Q *= stationaryDistribution.asDiagonal();
+    
     for (int i = 0; i < 20; i++) {
         double offDiag = 0.0;
         for (int j = 0; j < 20; j++) {
@@ -87,51 +95,33 @@ void TransitionProbabilityClass::recomputeTransitionProbs(int n, double t, int c
 }
 
 double TransitionProbabilityClass::lnPrior(){
-    return TransitionProbabilityClass::stationarylnPdf(
-        Eigen::Vector<double, 20>::Ones() * 5.0,
-        stationaryDistribution
-    );
+    return TransitionProbabilityClass::stationarylnPdf(stationaryLogits);
 }
 
-double TransitionProbabilityClass::simplexMove(boost::random::mt19937& rng, double alpha){
+void TransitionProbabilityClass::normalizeStationary(){
+    double totalExp = 0.0;
+    for(int i = 0; i < 20; i++){
+        double newExp = std::exp(stationaryLogits[i]);
+        totalExp += newExp;
+        stationaryDistribution[i] = newExp;
+    }
+    stationaryDistribution /= totalExp;
+}
+
+double TransitionProbabilityClass::stationaryMove(boost::random::mt19937& rng, double delta){
     boost::random::uniform_01<double> unif{};
-    double hastings = 0.0;
 
     int randomIndex = static_cast<int>(unif(rng) * 20);
     double currentValue = stationaryDistribution(randomIndex);
 
-    double a = alpha + 1.0;
-    double b = alpha / currentValue - a + 2.0;
-    boost::random::beta_distribution<double> forwardDist{a, b};
-    boost::math::beta_distribution<double> forwardDensity{a, b};
-    double newValue = forwardDist(rng);
+    auto shiftDistribution = boost::random::normal_distribution<double>(0.0, delta);
+    auto proposalDensity = boost::math::normal_distribution<double>(0.0, delta);
+    
+    double newValue = shiftDistribution(rng) + currentValue;
+
     stationaryDistribution(randomIndex) = newValue;
-
-    double newB = alpha / newValue - a + 2.0;
-    boost::math::beta_distribution<double> reverseDensity{a, newB};
-
-    hastings += std::log(boost::math::pdf(reverseDensity, currentValue)) - std::log(boost::math::pdf(forwardDensity, newValue));
-
-    double scaling = (1.0 - newValue) / (1.0 - currentValue);
-
-    double sum = 0.0;
-    for(int i = 0; i < 20; i++){
-        if(i != randomIndex){
-            stationaryDistribution(i) *= scaling;
-        }
-
-        if(stationaryDistribution(i) < 1e-30){
-            return -INFINITY;
-        }
-
-        sum += stationaryDistribution(i);
-    }
-
-    stationaryDistribution /= sum;
-
+    normalizeStationary();
     updated = true;
 
-    hastings += 18 * std::log(scaling) - 19 * std::log(sum);
-
-    return hastings;
+    return 0.0;
 }

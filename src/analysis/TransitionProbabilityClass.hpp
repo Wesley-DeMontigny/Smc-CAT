@@ -13,17 +13,19 @@
 struct TransitionProbabilityClass {
     public:
         TransitionProbabilityClass(void)=delete;
-        TransitionProbabilityClass(boost::random::mt19937& rng, int n, int c, Eigen::Matrix<double, 20, 20>* bM);
+        TransitionProbabilityClass(boost::random::mt19937& rng, int n, int c, Eigen::Vector<double, 190>* bM);
 
         void recomputeEigens();
         void recomputeTransitionProbs(int n, double t, int c, double r);
-        double simplexMove(boost::random::mt19937& rng, double alpha);
+        void normalizeStationary();
+        double stationaryMove(boost::random::mt19937& rng, double delta);
         double lnPrior();
-        static Eigen::Vector<double, 20> sampleStationary(boost::random::mt19937& rng, const Eigen::Vector<double, 20>& alpha);
-        static double stationarylnPdf(const Eigen::Vector<double, 20>& concentration, const Eigen::Vector<double, 20>& x);
+        static Eigen::Vector<double, 20> sampleStationaryLogits(boost::random::mt19937& rng);
+        static double stationarylnPdf(const Eigen::Vector<double, 20>& x);
 
         std::vector<Eigen::Matrix<CL_TYPE, 20, 20>> transitionProbabilities; // Indexed by node
-        Eigen::Matrix<double, 20, 20>* baseMatrix;
+        Eigen::Vector<double, 190>* baseMatrix;
+        Eigen::Vector<double, 20> stationaryLogits;
         Eigen::Vector<double, 20> stationaryDistribution;
         Eigen::Matrix<std::complex<double>, 20, 20> eigenVectors;
         Eigen::Matrix<std::complex<double>, 20, 20> inverseEigenVectors;
