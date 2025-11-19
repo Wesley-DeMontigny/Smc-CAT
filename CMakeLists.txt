@@ -70,8 +70,8 @@ else()
     )
 endif()
 
-target_compile_options(fastcat_lib PRIVATE -march=native -O3)
-target_compile_options(main PRIVATE -march=native -O3)
+target_compile_options(fastcat_lib PRIVATE -pedantic-errors -march=native -Wall -Werror -O3)
+target_compile_options(main PRIVATE -march=native -pedantic-errors -Wall -Werror -O3)
 
 if(DEBUG)
     target_compile_options(fastcat_lib PRIVATE -fsanitize=address -fno-omit-frame-pointer)

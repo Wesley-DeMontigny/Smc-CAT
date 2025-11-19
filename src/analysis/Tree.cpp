@@ -219,7 +219,7 @@ Tree::Tree(const Tree& t) {
     tips.push_back(initTip1);
 
     for(int i = 2; i < t.tips.size(); i++){
-        auto newInternal = addNode();
+        addNode();
         auto newTip = addNode();
         newTip->id = i;
         newTip->isTip = true;
@@ -776,7 +776,6 @@ double Tree::SPRMove(boost::random::mt19937& rng) {
     std::set<TreeNode*> children = p->descendants;
     TreeNode* s = chooseNodeFromSet(rng, children);
 
-    TreeNode* parentP = p->ancestor;
     TreeNode* sibling = nullptr; // Here we are assuming a strictly binary tree
     for (auto* c : p->descendants) {
         if (c != s) sibling = c;

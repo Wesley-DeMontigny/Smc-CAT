@@ -19,8 +19,8 @@
 #endif
 
 Particle::Particle(int seed, Alignment& aln, int nR, bool initInvar, bool lg) : 
-                       rng(seed), numChar(aln.getNumChar()), currentPhylogeny(rng, aln.getTaxaNames()), aln(aln), numRates(nR),
-                       oldPhylogeny(currentPhylogeny), numNodes(aln.getNumTaxa() * 2 - 1), numTaxa(aln.getNumTaxa()), usingLG(lg) {
+                       aln(aln), usingLG(lg), rng(seed), numChar(aln.getNumChar()), numNodes(aln.getNumTaxa() * 2 - 1), 
+                       numRates(nR), numTaxa(aln.getNumTaxa()), currentPhylogeny(rng, aln.getTaxaNames()), oldPhylogeny(currentPhylogeny) {
 
     // Reserve the spots for the rates. In initialization we can do gamma site rate heterogeneity if the numRates > 1
     currentRates.reserve(numRates);
@@ -99,10 +99,8 @@ void Particle::initialize(bool initInvar){
         auto normalDist = boost::random::normal_distribution(0.0, 1.0);
         auto coords = RateMatrices::contructLowerTriangleCoordinates();
 
-        double total = 0.0;
         for(int i = 0; i < 190; i++){
             double newEntry = normalDist(rng);
-            total += newEntry;
             (*currentBaseMatrix)(i) = newEntry;
         }
 
@@ -218,8 +216,6 @@ void Particle::copyFromSerialized(SerializedParticle& sp){
     
     if(numRates > 1)
         discretizeGamma(currentRates, currentShape, numRates);
-
-    const std::vector<TreeNode*>& nodes = currentPhylogeny.getPostOrder();
 
     #if TIME_PROFILE == 1
     std::chrono::steady_clock::time_point preTransProb = std::chrono::steady_clock::now();
@@ -371,8 +367,6 @@ void Particle::accept(){
         }
     }
     else if(currentMove == UpdateType::BRANCH_LENGTH || currentMove == UpdateType::SCALE_SUBTREE){ // This implies the post order traversals between new and old are the same
-        auto& postOrder = currentPhylogeny.getPostOrder();
-        auto& oldPostOrder = oldPhylogeny.getPostOrder();
         std::vector<TreeNode*> flipNodes;
         for(int i = 0; i < postOrder.size(); i++){
             TreeNode* node = postOrder[i];
@@ -858,7 +852,6 @@ double Particle::gibbsPartitionMove(double tempering){
 
         int nodeSpacer = bufferSize * numRates;
         int activeNodeSpacer = catSize * numRates;
-        int fullSpacer = numNodes * nodeSpacer;
 
         // Run the pruning algorithm
         for(auto n : postOrder){

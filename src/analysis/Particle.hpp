@@ -9,7 +9,7 @@
 #include <memory>
 
 class Alignment;
-class SerializedParticle;
+struct SerializedParticle;
 
 /**
  * @brief 

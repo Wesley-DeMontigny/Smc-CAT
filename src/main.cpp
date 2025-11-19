@@ -46,7 +46,6 @@ int main(int argc, char* argv[]){
     std::vector<SerializedParticle> currentSerializedParticles;
 
     Alignment aln(settings.fastaFile);
-    int numChar = aln.getNumChar();
 
     std::unordered_map<boost::dynamic_bitset<>, double> splitPosteriorProbabilities;
 
@@ -228,7 +227,6 @@ int main(int argc, char* argv[]){
             double stationaryDelta = 1.0;
 
             double pInvarMean = 0.0;
-            double invarAlpha = 0.5;
 
             Eigen::MatrixXd rateSampleMatrix(settings.numParticles, 190);
             Eigen::MatrixXd rateMatrixCovariance(190, 190);
@@ -296,7 +294,7 @@ int main(int argc, char* argv[]){
                 p.scaleDelta = std::max(scaleDelta, 0.01);
                 p.subtreeScaleDelta = std::max(scaleDelta, 0.01);
                 p.stationaryDelta = std::max(stationaryDelta, 0.01);
-                p.invarAlpha = invarAlpha;
+                p.invarAlpha = pInvarMean * 0.5;
                 if(!settings.lg){
                     p.rateMatrixDelta = std::max(shrinkageDiagonal, 0.01);
                     p.rateMatrixCholesky = rateMatrixCholesky;
