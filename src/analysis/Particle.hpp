@@ -48,9 +48,8 @@ static const std::array<std::string, 10> MoveNames = {
 class Particle {
     public:
         Particle(void)=delete;
-        Particle(int seed, Alignment& aln, int nR=1, bool initInvar=false, bool lg=true);
+        Particle(int seed, Alignment& aln, int nR=1, bool initInvar=false, bool lg=true, bool cat=true);
         
-        double branchMove();
         double getPInvar() const { return currentPInvar; }
         double getShape() const { return currentShape; }
         double gibbsPartitionMove(double tempering); // Returns infinity in case it is in an MH setting
@@ -60,7 +59,7 @@ class Particle {
         double rateMatrixMove();
         double shapeMove();
         double stationaryMove();
-        double topologyMove(const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosterior);
+        double treeMove(const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosterior);
         boost::random::mt19937& getRng(){ return rng; }
         Eigen::Vector<double, 190> getBaseMatrix() const { return *currentBaseMatrix; }
         int getNumCategories() { return currentTransitionProbabilityClasses.size(); }
@@ -76,7 +75,7 @@ class Particle {
         void accept();
         void copy(Particle& p);
         void copyFromSerialized(SerializedParticle& sp);
-        void initialize(bool initInvar=false);
+        void initialize(bool initInvar=false, bool initCat=true);
         void refreshLikelihood(bool forceUpdate = false); // Refreshes the likelihood and stores it in the currentLnLikelihood variable
         void reject();
         void setAssignments(std::vector<int>& assignments);

@@ -53,27 +53,18 @@ int main(int argc, char* argv[]){
 
     Mcmc mcmc{};
     mcmc.emplaceMove(std::tuple{
-        2.0,
+        3.0,
         [&aln](Particle& m){
-            return static_cast<int>(aln.getNumTaxa() / 2.0);
-        },
-        [](Particle& m){
-            return m.branchMove();
-        }
-    });
-    mcmc.emplaceMove(std::tuple{
-        2.0,
-        [&aln](Particle& m){
-            return static_cast<int>(aln.getNumTaxa() / 2.0);
+            return static_cast<int>(aln.getNumTaxa() * 0.25);
         },
         [&splitPosteriorProbabilities](Particle& m){
-            return m.topologyMove(splitPosteriorProbabilities);
+            return m.treeMove(splitPosteriorProbabilities);
         }
     });
     mcmc.emplaceMove(std::tuple{
         1.0,
         [](Particle& m){
-            return m.getNumCategories() * 5;
+            return m.getNumCategories() * 2;
         },
         [](Particle& m){
             return m.stationaryMove();
@@ -83,7 +74,7 @@ int main(int argc, char* argv[]){
         mcmc.emplaceMove(std::tuple{
             1.0,
             [](Particle& m){
-                return 5;
+                return 2;
             },
             [](Particle& m){
                 return m.shapeMove();
@@ -94,7 +85,7 @@ int main(int argc, char* argv[]){
         mcmc.emplaceMove(std::tuple{
             1.0,
             [](Particle& m){
-                return 5;
+                return 2;
             },
             [](Particle& m){
                 return m.invarMove();
@@ -105,7 +96,7 @@ int main(int argc, char* argv[]){
         mcmc.emplaceMove(std::tuple{
             1.0,
             [](Particle& m){
-                return 30;
+                return 5;
             },
             [](Particle& m){
                 return m.rateMatrixMove();
@@ -114,15 +105,13 @@ int main(int argc, char* argv[]){
     }
     mcmc.initMoveProbs();
 
-    auto rateMatrixCoords = RateMatrices::contructLowerTriangleCoordinates();
-
     std::vector<Particle> particles;
 
     std::chrono::steady_clock::time_point preAnalysis = std::chrono::steady_clock::now();
 
     particles.reserve(settings.numThreads);
     for (int t = 0; t < settings.numThreads; t++) {
-        particles.emplace_back(settings.seed + t, aln, settings.numRates, settings.invar, settings.lg);
+        particles.emplace_back(settings.seed + t, aln, settings.numRates, settings.invar, settings.lg, settings.cat);
     }
 
     std::cout << "Initializing SMC..." << std::endl;
@@ -147,7 +136,7 @@ int main(int argc, char* argv[]){
         initP.writeToSerialized(newParticle);
         currentSerializedParticles.emplace_back(std::move(newParticle));
         particleSplits[n] = initP.getSplitSet();
-        initP.initialize(settings.invar);
+        initP.initialize(settings.invar, settings.cat);
     }
     oldSerializedParticles = currentSerializedParticles;
     std::cout << "Initialized Particles..." << std::endl;
@@ -311,7 +300,7 @@ int main(int argc, char* argv[]){
                 p.copyFromSerialized(currentSerializedParticles[particleID]);
 
                 mcmc(p, settings.rejuvenationIterations, currentTemp);
-                if(unif(rng) < settings.alg8Probability){ // Update the CRP only for a fraction of particles
+                if(unif(rng) < settings.alg8Probability && settings.cat){ // Update the CRP only for a fraction of particles
                     p.gibbsPartitionMove(currentTemp);
                     p.refreshLikelihood(true);
                 }
@@ -412,7 +401,25 @@ int main(int argc, char* argv[]){
     }
 
     Tree consensusTree(buildInputs, aln.getTaxaNames());
-    std::cout << consensusTree.generateNewick(splitPosteriorProbabilities) << std::endl;
+    std::string consensusNewick = consensusTree.generateNewick(splitPosteriorProbabilities);
+    std::cout << consensusNewick << std::endl;
+
+    std::cout << "Writing Split File..." << std::endl;
+    std::sort(sortedSplits.begin(), sortedSplits.end(), [](auto& a, auto& b){
+        return a.first > b.first;
+    });
+
+    std::ofstream outFile("/workspaces/FastCAT/local_testing/splits.tsv");
+    outFile << "#TaxonOrder";
+    for(auto& name : aln.getTaxaNames()){
+        outFile << "\t" << name;
+    }
+    outFile << "\n";
+    outFile << "Bitset\tPosterior_Probability\n";
+    for(auto& p : sortedSplits){
+        outFile << p.first << "\t" << p.second << "\n";
+    }
+    outFile.close();
 
     std::chrono::steady_clock::time_point postAnalysis = std::chrono::steady_clock::now();
     std::cout << "The analysis completed in " << std::chrono::duration_cast<std::chrono::minutes>(postAnalysis - preAnalysis).count() << "[minutes]" << std::endl;

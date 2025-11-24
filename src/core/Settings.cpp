@@ -37,6 +37,9 @@ Settings::Settings(){
     auto invarBox = Checkbox("", &invar);
     auto invarInput = wrapFormElement("Invariant Sites", invarBox);
 
+    auto catBox = Checkbox("", &cat);
+    auto catInput = wrapFormElement("Use CAT", catBox);
+
     std::string numRatesString = std::to_string(numRates);
     auto ratesField = Input(&numRatesString, "4");
     auto ratesInput = wrapFormElement("Rate Number", ratesField);
@@ -117,6 +120,7 @@ Settings::Settings(){
     auto layout = Container::Vertical({
         rateMatrixInput,
         invarInput,
+        catInput,
         ratesInput,
         threadInput,
         rejuvenationInput,
@@ -153,10 +157,11 @@ Settings::Settings(){
                 catElements
             }) | border,
             vbox({
-                text("FastCAT Interactive Menu") | bold,
+                text("Smc-CAT Interactive Menu") | bold,
                 separator(),
                 rateMatrixInput->Render(),
                 invarInput->Render(),
+                catInput->Render(),
                 ratesInput->Render(),
                 threadInput->Render(),
                 rejuvenationInput->Render(),
@@ -217,7 +222,7 @@ Settings::Settings(int argc, char* argv[]){
             usage();
             std::exit(0);
         }
-        else if(arg == "-G" || arg == "-t" || arg == "-p" || arg == "-r" || arg == "-s" || arg == "-a"){}
+        else if(arg == "-G" || arg == "-t" || arg == "-p" || arg == "-r" || arg == "-s" || arg == "-a" || arg == "-C"){}
         else if(lastArgument == "-G"){
             try {
                 numRates = boost::lexical_cast<int>(arg);
@@ -296,10 +301,10 @@ Settings::Settings(int argc, char* argv[]){
 }
 
 void Settings::usage(){
-    std::cout << "Minimum FastCAT Usage:\n";
-    std::cout << "\tfastcat -a <fasta_file> -LG\n";
-    std::cout << "\tfastcat -a <fasta_file> -GTR\n";
-    std::cout << "FastCAT Command Line Arguments:\n";
+    std::cout << "Minimum Smc-CAT Usage:\n";
+    std::cout << "\tsmccat -a <fasta_file> -LG\n";
+    std::cout << "\tsmccat -a <fasta_file> -GTR\n";
+    std::cout << "Smc-CAT Command Line Arguments:\n";
     std::cout << "\t-a <fasta_file>         Specifies the alignment for the analysis.\n";
     std::cout << "\t-t <num_threads>        Specify the number of threads to dedicate to the analysis.\n";
     std::cout << "\t-p <num_particles>      Specify the number of particles to use during SMC.\n";
@@ -309,6 +314,7 @@ void Settings::usage(){
     std::cout << "\t-GTR                    Infer an amino acid GTR matrix.\n";
     std::cout << "\t-I                      Use invariant sites mixture.\n";
     std::cout << "\t-G <num_rates>          Specify the number of discretized rate categories in the rate mixture.\n";
+    std::cout << "\t-C                      User the CAT mixture model.\n";
 
     std::cout << std::flush;
 }

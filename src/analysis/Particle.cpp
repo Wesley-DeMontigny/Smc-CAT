@@ -18,7 +18,7 @@
     #include <chrono>
 #endif
 
-Particle::Particle(int seed, Alignment& aln, int nR, bool initInvar, bool lg) : 
+Particle::Particle(int seed, Alignment& aln, int nR, bool initInvar, bool lg, bool cat) : 
                        aln(aln), usingLG(lg), rng(seed), numChar(aln.getNumChar()), numNodes(aln.getNumTaxa() * 2 - 1), 
                        numRates(nR), numTaxa(aln.getNumTaxa()), currentPhylogeny(rng, aln.getTaxaNames()), oldPhylogeny(currentPhylogeny) {
 
@@ -75,10 +75,10 @@ Particle::Particle(int seed, Alignment& aln, int nR, bool initInvar, bool lg) :
     std::fill(moveCount.begin(), moveCount.end(), 0);
     std::fill(acceptCount.begin(), acceptCount.end(), 0);
 
-    initialize(initInvar);
+    initialize(initInvar, cat);
 }
 
-void Particle::initialize(bool initInvar){
+void Particle::initialize(bool initInvar, bool cat){
     // Construct rate matrix
     auto coords = RateMatrices::contructLowerTriangleCoordinates();
     if(usingLG){
@@ -97,7 +97,6 @@ void Particle::initialize(bool initInvar){
         currentBaseMatrix->setZero();
 
         auto normalDist = boost::random::normal_distribution(0.0, 1.0);
-        auto coords = RateMatrices::contructLowerTriangleCoordinates();
 
         for(int i = 0; i < 190; i++){
             double newEntry = normalDist(rng);
@@ -132,28 +131,36 @@ void Particle::initialize(bool initInvar){
         oldRates = currentRates;
     }
 
-    // Initialize the Chinese Restaurant Process
-    for(int i = 0; i < numChar; i++){
-        double randomVal = unif(rng);
-        double total = dppAlpha/(i + dppAlpha);
+    if(cat){
+        // Initialize the Chinese Restaurant Process
+        for(int i = 0; i < numChar; i++){
+            double randomVal = unif(rng);
+            double total = dppAlpha/(i + dppAlpha);
 
-        // If new category
-        if(total > randomVal){
-            auto newCat = TransitionProbabilityClass(rng, numNodes, numRates, currentBaseMatrix.get());
-            newCat.members.insert(i);
-            currentTransitionProbabilityClasses.push_back(newCat);
-            continue;
-        }
-
-        // If old category
-        for(auto &c : currentTransitionProbabilityClasses){
-            total += c.members.size()/(i+dppAlpha);
-
+            // If new category
             if(total > randomVal){
-                c.members.insert(i);
-                break;
+                auto newCat = TransitionProbabilityClass(rng, numNodes, numRates, currentBaseMatrix.get());
+                newCat.members.insert(i);
+                currentTransitionProbabilityClasses.push_back(newCat);
+                continue;
+            }
+
+            // If old category
+            for(auto &c : currentTransitionProbabilityClasses){
+                total += c.members.size()/(i+dppAlpha);
+
+                if(total > randomVal){
+                    c.members.insert(i);
+                    break;
+                }
             }
         }
+    }
+    else {
+        auto newCat = TransitionProbabilityClass(rng, numNodes, numRates, currentBaseMatrix.get());
+        for(int i = 0; i < numChar; i++)
+            newCat.members.insert(i);
+        currentTransitionProbabilityClasses.push_back(newCat);
     }
 
     refreshLikelihood(true);
@@ -667,31 +674,24 @@ void Particle::refreshLikelihood(bool forceUpdate){
     currentLnLikelihood = lnL;
 }
 
-double Particle::topologyMove(const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosterior){
+double Particle::treeMove(const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosterior){
     double hastings = 0.0;
 
     double randomMove = boost::random::uniform_01<double>{}(rng);
 
-    if(randomMove < 0.2){
+    if(randomMove < 0.1){
         hastings = currentPhylogeny.NNIMove(rng);
         currentMove = UpdateType::NNI;
     }
-    else if(randomMove < 0.8){
+    else if(randomMove < 0.4){
         hastings = currentPhylogeny.adaptiveNNIMove(rng, aNNIEpsilon, splitPosterior);
         currentMove = UpdateType::ADAPTIVE_NNI;
     }
-    else{
+    else if(randomMove < 0.5){
         hastings = currentPhylogeny.SPRMove(rng);
         currentMove = UpdateType::SPR;
     }
-
-    return hastings;
-}
-
-double Particle::branchMove(){
-    double hastings = 0.0;
-
-    if(boost::random::uniform_01<double>{}(rng) < 0.75){
+    else if(randomMove < 0.9){
         hastings = currentPhylogeny.scaleBranchMove(rng, scaleDelta);
         currentMove = UpdateType::BRANCH_LENGTH;
     }

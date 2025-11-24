@@ -94,15 +94,18 @@ namespace RateMatrices {
         return m;
     }
 
-    inline const std::vector<std::pair<int, int>>& contructLowerTriangleCoordinates() {
-        static std::vector<std::pair<int, int>> coords;
-        static std::once_flag callFlag;
+    inline const std::array<std::pair<int, int>, 190>& contructLowerTriangleCoordinates() {
+        static std::array<std::pair<int, int>, 190> coords{};
+        static std::once_flag callFlag{};
 
         std::call_once(callFlag, [&](){
-            coords.reserve(20 * (20 - 1) / 2);
-            for (int i = 1; i < 20; i++)
-                for (int j = 0; j < i; j++)
-                    coords.emplace_back(i, j);
+            int index = 0;
+            for (int i = 1; i < 20; i++){
+                for (int j = 0; j < i; j++){
+                    coords[index] = std::pair(i, j);
+                    index++;
+                }
+            }
         });
         return coords;
     }

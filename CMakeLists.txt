@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(FastCAT LANGUAGES CXX)
+project(Smc-CAT LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -27,14 +27,14 @@ find_package(OpenMP REQUIRED)
 
 file(GLOB_RECURSE SOURCES "${PROJECT_SOURCE_DIR}/src/*.cpp")
 list(REMOVE_ITEM SOURCES "${PROJECT_SOURCE_DIR}/src/main.cpp")
-add_library(fastcat_lib ${SOURCES})
-target_include_directories(fastcat_lib PUBLIC
+add_library(smccat_lib ${SOURCES})
+target_include_directories(smccat_lib PUBLIC
     ${PROJECT_SOURCE_DIR}/src
 )
 
 
 if(USE_UI)
-    target_link_libraries(fastcat_lib PUBLIC 
+    target_link_libraries(smccat_lib PUBLIC 
         Eigen3::Eigen 
         OpenMP::OpenMP_CXX 
         Boost::boost 
@@ -45,7 +45,7 @@ if(USE_UI)
 
     add_executable(main src/main.cpp)
     target_link_libraries(main PRIVATE 
-        fastcat_lib 
+        smccat_lib 
         Eigen3::Eigen 
         OpenMP::OpenMP_CXX 
         Boost::boost 
@@ -55,7 +55,7 @@ if(USE_UI)
     )
     add_compile_definitions(USE_UI=1)
 else()
-    target_link_libraries(fastcat_lib PUBLIC 
+    target_link_libraries(smccat_lib PUBLIC 
         Eigen3::Eigen 
         OpenMP::OpenMP_CXX 
         Boost::boost 
@@ -63,19 +63,19 @@ else()
 
     add_executable(main src/main.cpp)
     target_link_libraries(main PRIVATE 
-        fastcat_lib 
+        smccat_lib 
         Eigen3::Eigen 
         OpenMP::OpenMP_CXX 
         Boost::boost 
     )
 endif()
 
-target_compile_options(fastcat_lib PRIVATE -pedantic-errors -march=native -Wall -Werror -O3)
+target_compile_options(smccat_lib PRIVATE -pedantic-errors -march=native -Wall -Werror -O3)
 target_compile_options(main PRIVATE -march=native -pedantic-errors -Wall -Werror -O3)
 
 if(DEBUG)
-    target_compile_options(fastcat_lib PRIVATE -fsanitize=address -fno-omit-frame-pointer)
-    target_link_options(fastcat_lib PRIVATE -fsanitize=address)
+    target_compile_options(smccat_lib PRIVATE -fsanitize=address -fno-omit-frame-pointer)
+    target_link_options(smccat_lib PRIVATE -fsanitize=address)
     target_compile_options(main PRIVATE -fsanitize=address -fno-omit-frame-pointer -g)
     target_link_options(main PRIVATE -fsanitize=address)
 endif()
