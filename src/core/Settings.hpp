@@ -26,7 +26,7 @@ struct Settings {
     double rejuvenationThreshold = 0.6;
     int numRates = 1;
     unsigned int seed = 1;
-    std::string fastaFile = "/workspaces/FastCAT/local_testing/globin_aa_aligned.fasta"; 
+    std::string fastaFile = "/workspaces/FastCAT/local_testing/g4460_dataset.align.mafft.gappyout.fasta"; 
 };
 
 #endif
