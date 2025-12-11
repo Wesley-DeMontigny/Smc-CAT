@@ -10,7 +10,7 @@ option(USE_MIXED_PRECSION "Enabled Mixed Precision" ON)
 option(TIME_PROFILE "Enabled Time Profiling" OFF)
 option(DEBUG "Enabled Debug Mode" OFF)
 
-include_directories(${PROJECT_SOURCE_DIR})
+include_directories(${PROJECT_SOURCE_DIR}/src/)
 
 if(USE_UI)
     include(FetchContent)
@@ -26,26 +26,10 @@ find_package(Boost REQUIRED)
 find_package(OpenMP REQUIRED)
 
 file(GLOB_RECURSE SOURCES "${PROJECT_SOURCE_DIR}/src/*.cpp")
-list(REMOVE_ITEM SOURCES "${PROJECT_SOURCE_DIR}/src/main.cpp")
-add_library(smccat_lib ${SOURCES})
-target_include_directories(smccat_lib PUBLIC
-    ${PROJECT_SOURCE_DIR}/src
-)
-
+add_executable(main ${SOURCES})
 
 if(USE_UI)
-    target_link_libraries(smccat_lib PUBLIC 
-        Eigen3::Eigen 
-        OpenMP::OpenMP_CXX 
-        Boost::boost 
-        ftxui::component 
-        ftxui::dom 
-        ftxui::screen
-    )
-
-    add_executable(main src/main.cpp)
     target_link_libraries(main PRIVATE 
-        smccat_lib 
         Eigen3::Eigen 
         OpenMP::OpenMP_CXX 
         Boost::boost 
@@ -55,29 +39,17 @@ if(USE_UI)
     )
     add_compile_definitions(USE_UI=1)
 else()
-    target_link_libraries(smccat_lib PUBLIC 
-        Eigen3::Eigen 
-        OpenMP::OpenMP_CXX 
-        Boost::boost 
-    )
-
-    add_executable(main src/main.cpp)
     target_link_libraries(main PRIVATE 
-        smccat_lib 
         Eigen3::Eigen 
         OpenMP::OpenMP_CXX 
         Boost::boost 
     )
 endif()
 
-target_compile_options(smccat_lib PRIVATE -pedantic-errors -march=native -Wall -Werror -O3)
 target_compile_options(main PRIVATE -march=native -pedantic-errors -Wall -Werror -O3)
 
 if(DEBUG)
-    target_compile_options(smccat_lib PRIVATE -fsanitize=address -fno-omit-frame-pointer)
-    target_link_options(smccat_lib PRIVATE -fsanitize=address)
     target_compile_options(main PRIVATE -fsanitize=address -fno-omit-frame-pointer -g)
-    target_link_options(main PRIVATE -fsanitize=address)
 endif()
 
 if(USE_MIXED_PRECISION)
