@@ -1,12 +1,24 @@
 #include "TransitionProbabilityClass.hpp"
 #include "RateMatrices.hpp"
+#include <boost/random/gamma_distribution.hpp>
 #include <boost/random/normal_distribution.hpp>
 #include <boost/math/distributions/normal.hpp>
 #include <boost/math/distributions.hpp>
+#include <algorithm>
+#include <cmath>
 #include <eigen3/Eigen/Eigenvalues>
 #include <iostream>
 
-TransitionProbabilityClass::TransitionProbabilityClass(boost::random::mt19937& rng, int n, int c, Eigen::Vector<double, 190>* bM) : baseMatrix(bM), updated(false), numRates(c) {
+inline double stableSigmoid(double x){
+    if(x >= 0.0){
+        double e = std::exp(-x);
+        return 1.0 / (1.0 + e);
+    }
+    double e = std::exp(x);
+    return e / (1.0 + e);
+}
+
+TransitionProbabilityClass::TransitionProbabilityClass(boost::random::mt19937& rng, int n, int c, Eigen::Vector<double, 190>* bM) : baseMatrix(bM), updated(false), numRates(c){
     // Initialize a buffer of transition probabilities for each branch
     transitionProbabilities.reserve(n * numRates);
     for(int i = 0; i < n * numRates; i++){
@@ -15,41 +27,42 @@ TransitionProbabilityClass::TransitionProbabilityClass(boost::random::mt19937& r
         );
     }
 
-    workingMatrix1 = Eigen::Matrix<Eigen::dcomplex, 20, 20>::Zero();
-    workingMatrix2 = Eigen::Matrix<Eigen::dcomplex, 20, 20>::Zero();
-    workingDiag = Eigen::DiagonalMatrix<Eigen::dcomplex, 20>{};
-
     stationaryLogits = sampleStationaryLogits(rng);
     normalizeStationary();
 }
 
 Eigen::Vector<double, 20> TransitionProbabilityClass::sampleStationaryLogits(boost::random::mt19937& rng){
-    Eigen::Vector<double, 20> stationaryDistribution = Eigen::Vector<double, 20>::Zero();
+    // Draw from Dirichlet(2,...,2) via normalized Gamma(2,1), then map to centered stick-breaking coordinates.
 
-    for (size_t i = 0; i < 19; ++i) {
-        double randLogit = boost::random::normal_distribution<double>{0.0, 1.0}(rng);
-        stationaryDistribution(i) = randLogit;
+    constexpr double eps = 1e-15;
+    constexpr double dirichletAlpha = 2.0;
+    Eigen::Vector<double, 20> simplex = Eigen::Vector<double, 20>::Zero();
+    Eigen::Vector<double, 20> logits = Eigen::Vector<double, 20>::Zero();
+
+    boost::random::gamma_distribution<double> gammaDist{dirichletAlpha, 1.0};
+    double total = 0.0;
+    for(int i = 0; i < 20; i++){
+        simplex[i] = gammaDist(rng);
+        total += simplex[i];
+    }
+    simplex /= total;
+
+    double remainingStick = 1.0;
+    for(int k = 0; k < 19; k++){
+        double z = simplex[k] / remainingStick;
+        z = std::max(eps, std::min(1.0 - eps, z));
+        logits[k] = std::log(z) - std::log1p(-z) + std::log(static_cast<double>(20 - (k + 1)));
+        remainingStick -= simplex[k];
+        remainingStick = std::max(eps, remainingStick);
     }
 
-    return stationaryDistribution;
-}
-
-/**
- * TODO: Optionally allow for dirichlet prior. The mapping from logit to simplex has a log jacobian determinant factor of sum(log(x_i)) where x_i is the simplex value
- */
-double TransitionProbabilityClass::stationarylnPdf(const Eigen::Vector<double, 20>& x) {
-    boost::math::normal_distribution<double> standard_normal{};
-
-    double lnPdf = 0.0;
-    for(const auto& z : x)
-        lnPdf += std::log(boost::math::pdf(standard_normal, z));
-
-    return lnPdf;
+    return logits;
 }
 
 void TransitionProbabilityClass::recomputeEigens(){
     Eigen::Matrix<double,20,20> Q = Eigen::Matrix<double,20,20>::Zero();
     const auto& coords = RateMatrices::contructLowerTriangleCoordinates();
+    constexpr double eps = 1e-15;
 
     for(int c = 0; c < coords.size(); c++){
         const auto& [c1, c2] = coords[c];
@@ -59,67 +72,129 @@ void TransitionProbabilityClass::recomputeEigens(){
 
     Q *= stationaryDistribution.asDiagonal();
     
-    for (int i = 0; i < 20; i++) {
+    for (int i = 0; i < 20; i++){
         double offDiag = 0.0;
-        for (int j = 0; j < 20; j++) {
-            if (j != i) offDiag += Q(i,j);
+        for (int j = 0; j < 20; j++){
+            if(j != i) offDiag += Q(i,j);
         }
         Q(i,i) = -offDiag;
     }
 
     // rescale mean rate to 1.0
     double meanRate = 0.0;
-    for (int i = 0; i < 20; i++) {
+    for (int i = 0; i < 20; i++){
         meanRate += -Q(i,i) * stationaryDistribution(i);
     }
     Q /= meanRate;
 
-    Eigen::EigenSolver<Eigen::Matrix<double, 20, 20>> eigenSolver(Q);
-    eigenValues = eigenSolver.eigenvalues();
-    eigenVectors = eigenSolver.eigenvectors();
-    inverseEigenVectors = eigenVectors.inverse();
+    for(int i = 0; i < 20; i++){
+        double piVal = std::max(stationaryDistribution[i], eps);
+        sqrtPi[i] = std::sqrt(piVal);
+        invSqrtPi[i] = 1.0 / sqrtPi[i];
+    }
+
+    Eigen::Matrix<double,20,20> S = sqrtPi.asDiagonal() * Q * invSqrtPi.asDiagonal();
+    S = 0.5 * (S + S.transpose());
+
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, 20, 20>> eig(S);
+    if(eig.info() != Eigen::Success){
+        std::cout << "Failed symmetric eigendecomposition for CTMC transition construction." << std::endl;
+        std::cout << "Stationary min/max: " << stationaryDistribution.minCoeff() << " / " << stationaryDistribution.maxCoeff() << std::endl;
+        std::cout << "Q min/max: " << Q.minCoeff() << " / " << Q.maxCoeff() << std::endl;
+        std::exit(1);
+    }
+    symEigenValues = eig.eigenvalues();
+    symEigenVectors = eig.eigenvectors();
 }
 
 void TransitionProbabilityClass::recomputeTransitionProbs(int n, double t, int c, double r){
-    for(int i = 0; i < 20; i++)
-        workingDiag.diagonal()(i) = std::exp(eigenValues(i) * t * r);
+    constexpr double clampTol = 1e-12;
+    constexpr double eps = 1e-15;
+    double scaledTime = t * r;
 
-    workingMatrix1.noalias() = eigenVectors * workingDiag;
-    workingMatrix2.noalias() = workingMatrix1 * inverseEigenVectors;
+    Eigen::Vector<double, 20> expEigen = (symEigenValues.array() * scaledTime).exp();
+    Eigen::Matrix<double, 20, 20> M = symEigenVectors * expEigen.asDiagonal() * symEigenVectors.transpose();
+    Eigen::Matrix<double, 20, 20> P = invSqrtPi.asDiagonal() * M * sqrtPi.asDiagonal();
+
+    for(int i = 0; i < 20; i++){
+        for(int j = 0; j < 20; j++){
+            if(std::abs(P(i,j)) < clampTol || P(i,j) < 0){
+                P(i,j) = 0.0;
+            }
+        }
+    }
+
+    for(int i = 0; i < 20; i++){
+        double rowSum = P.row(i).sum();
+        if(rowSum <= eps || !std::isfinite(rowSum)){
+            std::cout << "Invalid CTMC transition row sum after reversible expm." << std::endl;
+            std::cout << "  Node: " << n << " Rate: " << c << std::endl;
+            std::cout << "  Row: " << i << " RowSum: " << rowSum << std::endl;
+            std::cout << "  T: " << t << " r: " << r << " Scaled: " << scaledTime << std::endl;
+            std::cout << "  Min/Max P Row: " << P.row(i).minCoeff() << " / " << P.row(i).maxCoeff() << std::endl;
+            std::exit(1);
+        }
+        P.row(i) /= rowSum;
+    }
 
     #if MIXED_PRECISION
-    transitionProbabilities[n*numRates + c] = workingMatrix2.real().cast<CL_TYPE>();
+    transitionProbabilities[n*numRates + c] = P.cast<CL_TYPE>();
     #else
-    transitionProbabilities[n*numRates + c] = workingMatrix2.real();
+    transitionProbabilities[n*numRates + c] = P;
     #endif
 }
 
 double TransitionProbabilityClass::lnPrior(){
-    return TransitionProbabilityClass::stationarylnPdf(stationaryLogits);
+    // Symmetric Dirichlet(2) prior on simplex under centered stick-breaking transform.
+    
+    constexpr double eps = 1e-15;
+    constexpr double dirichletAlpha = 2.0;
+
+    double lnJ = 0.0;
+    double lnDirichletKernel = 0.0;
+    double remainingStick = 1.0;
+    for(int k = 0; k < 19; k++){
+        double centered = stationaryLogits[k] - std::log(static_cast<double>(20 - (k + 1)));
+        double z = stableSigmoid(centered);
+        z = std::max(eps, std::min(1.0 - eps, z));
+
+        double simplexK = remainingStick * z;
+        simplexK = std::max(eps, simplexK);
+        lnDirichletKernel += (dirichletAlpha - 1.0) * std::log(simplexK);
+
+        lnJ += std::log(remainingStick) + std::log(z) + std::log(1.0 - z);
+        remainingStick *= (1.0 - z);
+        remainingStick = std::max(eps, remainingStick);
+    }
+    lnDirichletKernel += (dirichletAlpha - 1.0) * std::log(remainingStick);
+
+    return lnDirichletKernel + lnJ;
 }
 
 void TransitionProbabilityClass::normalizeStationary(){
-    double totalExp = 0.0;
-    for(int i = 0; i < 20; i++){
-        double newExp = std::exp(stationaryLogits[i]);
-        totalExp += newExp;
-        stationaryDistribution[i] = newExp;
+    // Centered stick-breaking transform from unconstrained space like Stan does
+    constexpr double eps = 1e-15;
+
+    double remainingStick = 1.0;
+    for(int k = 0; k < 20 - 1; k++){
+        double centered = stationaryLogits[k] - std::log(static_cast<double>(20 - (k + 1)));
+        double z = stableSigmoid(centered);
+        z = std::max(eps, std::min(1.0 - eps, z));
+
+        stationaryDistribution[k] = remainingStick * z;
+        remainingStick *= (1.0 - z);
     }
-    stationaryDistribution /= totalExp;
+    stationaryDistribution[19] = std::max(eps, remainingStick);
+    stationaryDistribution /= stationaryDistribution.sum();
 }
 
 double TransitionProbabilityClass::stationaryMove(boost::random::mt19937& rng, double delta){
     boost::random::uniform_01<double> unif{};
 
-    int randomIndex = static_cast<int>(unif(rng) * 20);
-    double currentValue = stationaryDistribution(randomIndex);
-
+    // Only the first K-1 unconstrained coordinates parameterize simplex[K].
+    int randomIndex = static_cast<int>(unif(rng) * 19);
     auto shiftDistribution = boost::random::normal_distribution<double>(0.0, delta);
-    auto proposalDensity = boost::math::normal_distribution<double>(0.0, delta);
-    
-    double newValue = shiftDistribution(rng) + currentValue;
-
-    stationaryDistribution(randomIndex) = newValue;
+    stationaryLogits(randomIndex) += shiftDistribution(rng);
     normalizeStationary();
     updated = true;
 

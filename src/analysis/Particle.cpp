@@ -1,4 +1,4 @@
-#include "core/Alignment.hpp"
+#include "misc/Alignment.hpp"
 #include "Particle.hpp"
 #include "RateMatrices.hpp"
 #include "SerializedParticle.hpp"
@@ -20,11 +20,11 @@
 
 Particle::Particle(int seed, Alignment& aln, int nR, bool initInvar, bool lg, bool cat) : 
                        aln(aln), usingLG(lg), rng(seed), numChar(aln.getNumChar()), numNodes(aln.getNumTaxa() * 2 - 1), 
-                       numRates(nR), numTaxa(aln.getNumTaxa()), currentPhylogeny(rng, aln.getTaxaNames()), oldPhylogeny(currentPhylogeny) {
+                       numRates(nR), numTaxa(aln.getNumTaxa()), currentPhylogeny(rng, aln.getTaxaNames()), oldPhylogeny(currentPhylogeny){
 
     // Reserve the spots for the rates. In initialization we can do gamma site rate heterogeneity if the numRates > 1
     currentRates.reserve(numRates);
-    for (int r = 0; r < numRates; r++) {
+    for (int r = 0; r < numRates; r++){
         currentRates.emplace_back(1.0);
     }
     oldRates = currentRates;
@@ -236,7 +236,7 @@ void Particle::copyFromSerialized(SerializedParticle& sp){
             currentTransitionProbabilityClasses.end()
         );
 
-    for (int i = 0; i < targetSize; i++) {
+    for (int i = 0; i < targetSize; i++){
         if(i < oldSize){
             TransitionProbabilityClass& cls = currentTransitionProbabilityClasses[i];
 
@@ -246,7 +246,7 @@ void Particle::copyFromSerialized(SerializedParticle& sp){
 
             cls.members.clear();
             for (size_t m = 0; m < sp.assignments.size(); m++){
-                if (sp.assignments[m] == i){
+                if(sp.assignments[m] == i){
                     cls.members.insert(m);
                 }
             }
@@ -259,7 +259,7 @@ void Particle::copyFromSerialized(SerializedParticle& sp){
             *cls.baseMatrix = sp.baseMatrix;
 
             for (size_t m = 0; m < sp.assignments.size(); m++){
-                if (sp.assignments[m] == i){
+                if(sp.assignments[m] == i){
                     cls.members.insert(m);
                 }
             }
@@ -361,7 +361,7 @@ void Particle::accept(){
         oldRates = currentRates;
         oldShape = currentShape;
     }
-    else if(currentMove == UpdateType::RATE_MATRIX_FULL){
+    else if(currentMove == UpdateType::RATE_MATRIX_FULL || currentMove == UpdateType::RATE_MATRIX_SINGLE){
         *oldBaseMatrix = *currentBaseMatrix;
         oldTransitionProbabilityClasses = currentTransitionProbabilityClasses;
     }
@@ -386,9 +386,7 @@ void Particle::accept(){
 
         for(int i = 0; i < currentTransitionProbabilityClasses.size(); i++){
             for(TreeNode* node : flipNodes){
-                if(node->updateTP){
-                    oldTransitionProbabilityClasses[i].transitionProbabilities[node->id] = currentTransitionProbabilityClasses[i].transitionProbabilities[node->id];
-                }
+                oldTransitionProbabilityClasses[i].transitionProbabilities[node->id] = currentTransitionProbabilityClasses[i].transitionProbabilities[node->id];
             }
         }
     }
@@ -431,7 +429,7 @@ void Particle::reject(){
         currentRates = oldRates;
         currentShape = oldShape;
     }
-    else if(currentMove == UpdateType::RATE_MATRIX_FULL){
+    else if(currentMove == UpdateType::RATE_MATRIX_FULL || currentMove == UpdateType::RATE_MATRIX_SINGLE){
         *currentBaseMatrix = *oldBaseMatrix;
         currentTransitionProbabilityClasses = oldTransitionProbabilityClasses;
     }
@@ -454,9 +452,7 @@ void Particle::reject(){
 
         for(int i = 0; i < currentTransitionProbabilityClasses.size(); i++){
             for(TreeNode* node : flipNodes){
-                if(node->updateTP){
-                    currentTransitionProbabilityClasses[i].transitionProbabilities[node->id] = oldTransitionProbabilityClasses[i].transitionProbabilities[node->id];
-                }
+                currentTransitionProbabilityClasses[i].transitionProbabilities[node->id] = oldTransitionProbabilityClasses[i].transitionProbabilities[node->id];
             }
         }
     }
@@ -506,7 +502,7 @@ double Particle::lnPrior(){
 
     // DPP Prior
     lnP += std::log(dppAlpha) * currentTransitionProbabilityClasses.size();
-    for (auto& c : currentTransitionProbabilityClasses) {
+    for (auto& c : currentTransitionProbabilityClasses){
         int memberCount = c.members.size();
         lnP += c.lnPrior(); // Stationary Prior
         lnP += std::lgamma(memberCount);
@@ -516,11 +512,11 @@ double Particle::lnPrior(){
     return lnP;
 }
 
-void Particle::setAssignments(std::vector<int>& assignments) {
-    for (int i = 0; i < currentTransitionProbabilityClasses.size(); i++) {
+void Particle::setAssignments(std::vector<int>& assignments){
+    for (int i = 0; i < currentTransitionProbabilityClasses.size(); i++){
         currentTransitionProbabilityClasses[i].members.clear();
         for (size_t m = 0; m < assignments.size(); m++){
-            if (assignments[m] == i){
+            if(assignments[m] == i){
                 currentTransitionProbabilityClasses[i].members.insert(m);
             }
         }
@@ -534,19 +530,20 @@ void Particle::refreshLikelihood(bool forceUpdate){
     std::chrono::steady_clock::time_point preTPUpdate = std::chrono::steady_clock::now();
     #endif
 
-    if(currentMove == UpdateType::STATIONARY_SINGLE|| forceUpdate){ // Update all TPs of that class if that was the last move
+    if(currentMove == UpdateType::STATIONARY_SINGLE || currentMove == UpdateType::RATE_MATRIX_FULL || currentMove == UpdateType::RATE_MATRIX_SINGLE || forceUpdate){ // Update all classes when stationary vectors or the shared base matrix changed
         for(auto& c : currentTransitionProbabilityClasses){
-            if(c.updated || forceUpdate){
+            if(c.updated || currentMove == UpdateType::RATE_MATRIX_FULL || currentMove == UpdateType::RATE_MATRIX_SINGLE || forceUpdate){
                 c.recomputeEigens();
                 for(auto n : postOrder){
-                    for(int r = 0; r < numRates; r++)
+                    for(int r = 0; r < numRates; r++){
                         c.recomputeTransitionProbs(n->id, n->branchLength, r, currentRates[r]);
+                    }
                 }
                 c.updated = false;
             }
         }
     }
-    else if(currentMove == UpdateType::BRANCH_LENGTH || currentMove == UpdateType::SCALE_SUBTREE || currentMove == UpdateType::RATE_SHAPE || currentMove == UpdateType::RATE_MATRIX_FULL){ // Update specific branch lengths if that was the last move
+    else if(currentMove == UpdateType::BRANCH_LENGTH || currentMove == UpdateType::SCALE_SUBTREE || currentMove == UpdateType::RATE_SHAPE){ // Update specific branch lengths if that was the last move
         for(auto n : postOrder){
             if(n->updateTP){
                 for(auto& c : currentTransitionProbabilityClasses){
@@ -593,12 +590,6 @@ void Particle::refreshLikelihood(bool forceUpdate){
                 uint8_t dWorkingSpace = currentConditionalLikelihoodFlags[dIndex];
                 auto pD = conditionaLikelihoodBuffer.get() + (dIndex * nodeSpacer) + (dWorkingSpace * fullSpacer);
 
-                /*
-                    We are adopting a class-wise version of the inner loop. Indexing isn't as nice as incrementing a pointer
-                    but when we have many classes we don't want to have to re-access a block of memory. Lets say that we have
-                    100s of matrices - those aren't going to all fit in the cache. So if we alternate between matrix use due
-                    to iterating over sites rather than classes, we risk additional cache misses
-                */
                 for(auto& tClass : currentTransitionProbabilityClasses){
                     for(int r = 0; r < numRates; r++){
                         Eigen::Matrix<CL_TYPE, 20, 20>& P = tClass.transitionProbabilities[pOffset + r];
@@ -650,12 +641,13 @@ void Particle::refreshLikelihood(bool forceUpdate){
             // We need to use log-sum-exp to handle multiple rates
             double maxLogLike = -1.0 * INFINITY;
 
-            for (int r = 0; r < numRates; r++) {
-                double logLikeR = std::log((stationaryVec * (pR[c * numRates + r]).array()).sum());
+            for (int r = 0; r < numRates; r++){
+                double rootProb = (stationaryVec * (pR[c * numRates + r]).array()).sum();
+                double logLikeR = std::log(rootProb);
                 for (int n = 0; n < numNodes; n++)
                     logLikeR += rescaleBuffer[nodeSpacer * n + c * numRates + r];
                 logs[r] = logLikeR;
-                if (logLikeR > maxLogLike) maxLogLike = logLikeR;
+                if(logLikeR > maxLogLike) maxLogLike = logLikeR;
             }
 
             double sumExp = 0.0;
@@ -663,11 +655,27 @@ void Particle::refreshLikelihood(bool forceUpdate){
                 sumExp += std::exp(logs[r] - maxLogLike);
 
             double logSiteLike = maxLogLike + std::log(sumExp);
-
-            double finalSiteLike = std::exp(logSiteLike) * invInvarScaler
-                + currentPInvar * stationaryVec[invariantCharacter[c]] * isInvariant[c];
-
-            lnL += std::log(finalSiteLike);
+            double logMainTerm = (invInvarScaler > 0.0)
+                ? (std::log(invInvarScaler) + logSiteLike)
+                : -std::numeric_limits<double>::infinity();
+            double logInvarTerm = -std::numeric_limits<double>::infinity();
+            if(currentPInvar > 0.0 && isInvariant[c] > 0.0){
+                double invarProb = static_cast<double>(stationaryVec[invariantCharacter[c]]);
+                if(invarProb > 0.0){
+                    logInvarTerm = std::log(currentPInvar) + std::log(invarProb);
+                }
+            }
+            double logFinalSiteLike = logMainTerm;
+            if(logInvarTerm > logFinalSiteLike){
+                double tmp = logFinalSiteLike;
+                logFinalSiteLike = logInvarTerm;
+                logInvarTerm = tmp;
+            }
+            if(std::isfinite(logInvarTerm)){
+                logFinalSiteLike += std::log1p(std::exp(logInvarTerm - logFinalSiteLike));
+            }
+            
+            lnL += logFinalSiteLike;
         }
     }
 
@@ -807,8 +815,8 @@ double Particle::gibbsPartitionMove(double tempering){
         #endif
         int randomSite = static_cast<int>(unif(rng) * numChar);
         int originalCategory = -1;
-        for (int i = 0; i < currentTransitionProbabilityClasses.size(); i++) {
-            if (currentTransitionProbabilityClasses[i].members.count(randomSite)) {
+        for (int i = 0; i < currentTransitionProbabilityClasses.size(); i++){
+            if(currentTransitionProbabilityClasses[i].members.count(randomSite)){
                 originalCategory = i;
                 break;
             }
@@ -892,7 +900,7 @@ double Particle::gibbsPartitionMove(double tempering){
             else{
                 for(int c = 0; c < catSize; c++){
                     for(int r = 0; r < numRates; r++){
-                        pN[c*numRates + r].noalias() = *(conditionaLikelihoodBuffer.get() + nIndex * numChar * numRates + randomSite);
+                        pN[c*numRates + r].noalias() = *(conditionaLikelihoodBuffer.get() + nIndex * numChar * numRates + randomSite * numRates + r);
                     }
                 }
             }
@@ -915,12 +923,13 @@ double Particle::gibbsPartitionMove(double tempering){
 
             double maxLogLike = -std::numeric_limits<double>::infinity();
 
-            for (int r = 0; r < numRates; r++) {
-                double logLikeR = std::log((stationaryVec * (pR[c*numRates + r]).array()).sum());
+            for (int r = 0; r < numRates; r++){
+                double rootProb = (stationaryVec * (pR[c*numRates + r]).array()).sum();
+                double logLikeR = std::log(rootProb);
                 for (int n = 0; n < numNodes; n++)
                     logLikeR += tempRescaleBuffer[nodeSpacer * n + c * numRates + r];
                 logs[r] = logLikeR;
-                if (logLikeR > maxLogLike) maxLogLike = logLikeR;
+                if(logLikeR > maxLogLike) maxLogLike = logLikeR;
             }
 
             double sumExp = 0.0;
@@ -928,15 +937,32 @@ double Particle::gibbsPartitionMove(double tempering){
                 sumExp += std::exp(logs[r] - maxLogLike);
 
             double logSiteLike = maxLogLike + std::log(sumExp);
-            double finalSiteLike = std::exp(logSiteLike) * invInvarScaler
-                + currentPInvar * stationaryVec[invariantCharacter[randomSite]] * isInvariant[randomSite];
-            finalSiteLike = std::log(finalSiteLike) * tempering;
+            double logMainTerm = (invInvarScaler > 0.0)
+                ? (std::log(invInvarScaler) + logSiteLike)
+                : -std::numeric_limits<double>::infinity();
+            double logInvarTerm = -std::numeric_limits<double>::infinity();
+            if(currentPInvar > 0.0 && isInvariant[randomSite] > 0.0){
+                double invarProb = static_cast<double>(stationaryVec[invariantCharacter[randomSite]]);
+                if(invarProb > 0.0){
+                    logInvarTerm = std::log(currentPInvar) + std::log(invarProb);
+                }
+            }
+            double logFinalSiteLike = logMainTerm;
+            if(logInvarTerm > logFinalSiteLike){
+                double tmp = logFinalSiteLike;
+                logFinalSiteLike = logInvarTerm;
+                logInvarTerm = tmp;
+            }
+            if(std::isfinite(logInvarTerm)){
+                logFinalSiteLike += std::log1p(std::exp(logInvarTerm - logFinalSiteLike));
+            }
+            double temperedLogSiteLike = logFinalSiteLike * tempering;
 
             if(c < catSize - numAux){
-                likelihoodVec.push_back(finalSiteLike + std::log(currentTransitionProbabilityClasses[c].members.size()));
+                likelihoodVec.push_back(temperedLogSiteLike + std::log(currentTransitionProbabilityClasses[c].members.size()));
             }
             else {
-                likelihoodVec.push_back(finalSiteLike + alphaSplit);
+                likelihoodVec.push_back(temperedLogSiteLike + alphaSplit);
             }
         }
 
@@ -956,7 +982,7 @@ double Particle::gibbsPartitionMove(double tempering){
         for(int i = 0; i < likelihoodVec.size(); i++){
             total += likelihoodVec[i];
             if(total > categoryDraw){
-                if(i < catSize - numAux) { //It already exists
+                if(i < catSize - numAux){ //It already exists
                     currentTransitionProbabilityClasses.erase(start, currentTransitionProbabilityClasses.end());
                     currentTransitionProbabilityClasses[i].members.insert(randomSite);
                 }

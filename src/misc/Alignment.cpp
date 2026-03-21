@@ -3,7 +3,7 @@
 #include <iostream>
 #include <map>
 
-Alignment::Alignment(std::string path) : numChar(0), numTaxa(0) {
+Alignment::Alignment(std::string path) : numChar(0), numTaxa(0){
     std::map<char, int> alphabet{
         {'A', 0},
         {'R', 1},
@@ -36,7 +36,7 @@ Alignment::Alignment(std::string path) : numChar(0), numTaxa(0) {
     std::vector<std::vector<int>> sequences{};
 
     int currentIndex = 0;
-    if (file.is_open()){
+    if(file.is_open()){
         std::string line;
         std::vector<int> currentSequence;
         while(std::getline(file, line)){
@@ -65,7 +65,7 @@ Alignment::Alignment(std::string path) : numChar(0), numTaxa(0) {
                             currentSequence.push_back(code);
                         }
                         else {
-                            if (std::isprint(upper) && !std::isspace(upper)) { 
+                            if(std::isprint(upper) && !std::isspace(upper)){ 
                                 std::cerr << "Warning: Detected unknown character in fasta (we are ignoring it): " << line[i] << std::endl;
                             }
                         }

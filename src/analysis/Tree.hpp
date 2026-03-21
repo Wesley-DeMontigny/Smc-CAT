@@ -26,10 +26,10 @@ struct TreeNode {
     bool updateCL;
     bool updateTP;
 
-    bool isInSubtree(TreeNode* r) {
-        if (this == r) return true;
+    bool isInSubtree(TreeNode* r){
+        if(this == r) return true;
         for (auto* c : r->descendants)
-            if (this->isInSubtree(c)) return true;
+            if(this->isInSubtree(c)) return true;
         return false;
     }
 };

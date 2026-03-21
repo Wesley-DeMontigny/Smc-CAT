@@ -3,8 +3,21 @@
 #include <boost/random/uniform_01.hpp>
 #include <boost/random/exponential_distribution.hpp>
 #include <cassert>
+#include <cmath>
 #include <iostream>
 #include <memory>
+
+
+int countSPRAttachments(const std::vector<std::unique_ptr<TreeNode>>& nodes, TreeNode* root, TreeNode* p){
+    int count = 0;
+    for (const auto& nPtr : nodes){
+        TreeNode* candidate = nPtr.get();
+        if(candidate != root && !candidate->isInSubtree(p)){
+            count++;
+        }
+    }
+    return count;
+}
 
 // Construct random tree with n tips and exponentially distributed branch lengths
 Tree::Tree(boost::random::mt19937& rng, int n){
@@ -53,7 +66,7 @@ Tree::Tree(boost::random::mt19937& rng, int n){
         // Update old ancestor by adding a new descendant and removing the old one
         newInternal->ancestor->descendants.insert(newInternal);
         auto it = newInternal->ancestor->descendants.find(randomTip);
-        if (it != newInternal->ancestor->descendants.end()) {
+        if(it != newInternal->ancestor->descendants.end()){
             newInternal->ancestor->descendants.erase(it);
         }
     }
@@ -68,7 +81,7 @@ Tree::Tree(boost::random::mt19937& rng, int n){
 
     // Sort so we can access nodes by their ID
     std::sort(nodes.begin(), nodes.end(),
-        [](const std::unique_ptr<TreeNode>& a, const std::unique_ptr<TreeNode>& b) {
+        [](const std::unique_ptr<TreeNode>& a, const std::unique_ptr<TreeNode>& b){
             return a->id < b->id;
         }
     );
@@ -157,7 +170,7 @@ Tree::Tree(std::string newick, const std::vector<std::string>& taxaNames){
     }
 
     std::sort(nodes.begin(), nodes.end(),
-        [](const std::unique_ptr<TreeNode>& a, const std::unique_ptr<TreeNode>& b) {
+        [](const std::unique_ptr<TreeNode>& a, const std::unique_ptr<TreeNode>& b){
             return a->id < b->id;
         }
     );
@@ -171,7 +184,7 @@ Tree::Tree(boost::random::mt19937& rng, const std::vector<std::string>& taxaName
     }
 }
 
-Tree::Tree(const std::vector<std::pair<boost::dynamic_bitset<>, double>>& splits, const std::vector<std::string>& taxaNames) {
+Tree::Tree(const std::vector<std::pair<boost::dynamic_bitset<>, double>>& splits, const std::vector<std::string>& taxaNames){
 
     for(int i = 0; i < taxaNames.size(); i++){
         auto newTip = addNode();
@@ -195,7 +208,7 @@ Tree::Tree(const std::vector<std::pair<boost::dynamic_bitset<>, double>>& splits
     }
 
     std::sort(nodes.begin(), nodes.end(),
-        [](const std::unique_ptr<TreeNode>& a, const std::unique_ptr<TreeNode>& b) {
+        [](const std::unique_ptr<TreeNode>& a, const std::unique_ptr<TreeNode>& b){
             return a->id < b->id;
         }
     );
@@ -203,7 +216,7 @@ Tree::Tree(const std::vector<std::pair<boost::dynamic_bitset<>, double>>& splits
     regeneratePostOrder();
 }
 
-Tree::Tree(const Tree& t) {
+Tree::Tree(const Tree& t){
     root = addNode();
     root->isRoot = true;
     root->branchLength = 0.0;
@@ -234,7 +247,7 @@ Tree::Tree(const Tree& t) {
     }
 
     std::sort(nodes.begin(), nodes.end(),
-        [](const std::unique_ptr<TreeNode>& a, const std::unique_ptr<TreeNode>& b) {
+        [](const std::unique_ptr<TreeNode>& a, const std::unique_ptr<TreeNode>& b){
             return a->id < b->id;
         }
     );
@@ -242,7 +255,7 @@ Tree::Tree(const Tree& t) {
     clone(t);
 }
 
-Tree& Tree::operator=(const Tree& t) {
+Tree& Tree::operator=(const Tree& t){
     if(this == &t)
         return *this;
     
@@ -289,8 +302,8 @@ TreeNode* Tree::buildTree(const std::vector<std::pair<boost::dynamic_bitset<>, d
 
         std::vector<std::pair<boost::dynamic_bitset<>, double>> relevant;
         relevant.reserve(splits.size());
-        for (const auto& s : splits) {
-            if ((s.first & taxa).any() && ((~s.first) & taxa).any())
+        for (const auto& s : splits){
+            if((s.first & taxa).any() && ((~s.first) & taxa).any())
                 relevant.push_back(s);
         }
 
@@ -320,12 +333,12 @@ TreeNode* Tree::buildTree(const std::vector<std::pair<boost::dynamic_bitset<>, d
             if(!leftSearch.test(0))
                 leftSearch.flip();
 
-            for(const auto& [splitBits, length] : relevant) {
-                if(!setLeft && splitBits == leftSearch) {
+            for(const auto& [splitBits, length] : relevant){
+                if(!setLeft && splitBits == leftSearch){
                     leftNode->branchLength = length;
                     setLeft = true;
                 }
-                if(!setRight && splitBits == rightSearch) {
+                if(!setRight && splitBits == rightSearch){
                     rightNode->branchLength = length;
                     setRight = true;
                 }
@@ -340,7 +353,7 @@ TreeNode* Tree::buildTree(const std::vector<std::pair<boost::dynamic_bitset<>, d
     }
 }
 
-TreeNode* Tree::addNode(boost::random::mt19937& rng) {
+TreeNode* Tree::addNode(boost::random::mt19937& rng){
 
     auto newNode = std::make_unique<TreeNode>(
         TreeNode{0, "", false, false, boost::random::exponential_distribution<double>{10.0}(rng), nullptr, {}, false, false}
@@ -352,7 +365,7 @@ TreeNode* Tree::addNode(boost::random::mt19937& rng) {
     return rawPtr;
 }
 
-TreeNode* Tree::addNode() {
+TreeNode* Tree::addNode(){
 
     auto newNode = std::make_unique<TreeNode>(
         TreeNode{0, "", false, false, 1.0, nullptr, {}, false, false}
@@ -418,7 +431,7 @@ std::string Tree::generateNewick(const std::unordered_map<boost::dynamic_bitset<
 std::string Tree::recursiveNewickGenerate(std::string s, TreeNode* p) const{
     if(! p->isTip){
         s += "(";
-        for(auto child : p->descendants) {
+        for(auto child : p->descendants){
             s = recursiveNewickGenerate(s, child);
             s += ",";
         }
@@ -439,7 +452,7 @@ std::string Tree::recursiveNewickGenerate(std::string s, TreeNode* p) const{
 std::string Tree::recursiveNewickGenerate(std::string s, TreeNode* p, const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosteriorProbabilities, const std::unordered_map<int, boost::dynamic_bitset<>>& splitMap) const{
     if(! p->isTip){
         s += "(";
-        for(auto child : p->descendants) {
+        for(auto child : p->descendants){
             s = recursiveNewickGenerate(s, child, splitPosteriorProbabilities, splitMap);
             s += ",";
         }
@@ -467,7 +480,7 @@ void Tree::regeneratePostOrder(){
 
 void Tree::recursivePostOrderAssign(TreeNode* p){
     if(! p->isTip){
-        for(auto child : p->descendants) {
+        for(auto child : p->descendants){
             recursivePostOrderAssign(child);
         }
     }
@@ -648,11 +661,11 @@ double Tree::NNIMove(boost::random::mt19937& rng){
     p->descendants.insert(n2);
     
     auto it = p->descendants.find(n1);
-    if (it != p->descendants.end()) {
+    if(it != p->descendants.end()){
         p->descendants.erase(it);
     }
     auto it2 = a->descendants.find(n2);
-    if (it2 != a->descendants.end()) {
+    if(it2 != a->descendants.end()){
         a->descendants.erase(it2);
     }
 
@@ -724,11 +737,11 @@ double Tree::adaptiveNNIMove(boost::random::mt19937& rng, double epsilon, const 
     p->descendants.insert(n2);
     
     auto it = p->descendants.find(n1);
-    if (it != p->descendants.end()) {
+    if(it != p->descendants.end()){
         p->descendants.erase(it);
     }
     auto it2 = a->descendants.find(n2);
-    if (it2 != a->descendants.end()) {
+    if(it2 != a->descendants.end()){
         a->descendants.erase(it2);
     }
 
@@ -765,7 +778,7 @@ double Tree::adaptiveNNIMove(boost::random::mt19937& rng, double epsilon, const 
     return std::log(revProb) - std::log(selectedProb);
 }
 
-double Tree::SPRMove(boost::random::mt19937& rng) {
+double Tree::SPRMove(boost::random::mt19937& rng){
     boost::random::uniform_01<double> unif{};
 
     TreeNode* p = nullptr;
@@ -777,11 +790,12 @@ double Tree::SPRMove(boost::random::mt19937& rng) {
     TreeNode* s = chooseNodeFromSet(rng, children);
 
     TreeNode* sibling = nullptr; // Here we are assuming a strictly binary tree
-    for (auto* c : p->descendants) {
-        if (c != s) sibling = c;
+    for (auto* c : p->descendants){
+        if(c != s) sibling = c;
     }
 
     TreeNode* a = nullptr; // Select attachment point
+    int forwardAttachmentChoices = countSPRAttachments(nodes, root, p);
     do {
         a = nodes[static_cast<int>(unif(rng) * nodes.size())].get();
     } while (a->isInSubtree(p) || a == root);
@@ -801,12 +815,20 @@ double Tree::SPRMove(boost::random::mt19937& rng) {
     a->ancestor = p;
 
     TreeNode* q = p;
-    while (q != nullptr) {
+    while (q != nullptr){
         q->updateCL = true;
         q = q->ancestor;
     }
 
+    // Reverse proposal must attach outside the new subtree under the same moved node p.
+    int reverseAttachmentChoices = countSPRAttachments(nodes, root, p);
+    if(forwardAttachmentChoices <= 0 || reverseAttachmentChoices <= 0){
+        std::cerr << "Invalid SPR proposal state: no valid attachment choices." << std::endl;
+        std::exit(1);
+    }
+
     regeneratePostOrder();
 
-    return 0.0;
+    return std::log(static_cast<double>(forwardAttachmentChoices)) -
+           std::log(static_cast<double>(reverseAttachmentChoices));
 }

@@ -5,7 +5,7 @@
 #include <functional>
 #include <iostream>
 
-Mcmc::Mcmc(void) : totalMoveWeight(0.0) {}
+Mcmc::Mcmc(void) : totalMoveWeight(0.0){}
 
 void Mcmc::emplaceMove(std::tuple<double, std::function<int(Particle&)>, std::function<double(Particle&)>>&& move){
     totalMoveWeight += std::get<0>(move);

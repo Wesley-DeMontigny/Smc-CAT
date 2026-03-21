@@ -14,7 +14,7 @@ class Alignment {
         int operator()(int t, int s) const {return dataMatrix[t*numChar + s];}
         int getNumChar() const {return numChar;}
         int getNumTaxa() const {return numTaxa;}
-        std::vector<std::string> getTaxaNames() {return taxaNames;}
+        std::vector<std::string> getTaxaNames(){return taxaNames;}
     private:
         int numChar;
         int numTaxa;

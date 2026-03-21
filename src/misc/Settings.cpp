@@ -72,7 +72,7 @@ Settings::Settings(){
         try {
             seed = boost::lexical_cast<unsigned int>(seedString);
         }
-        catch(...) {
+        catch(...){
             errorMessage = "Seed is an unsigned int";
             return;
         }
@@ -80,7 +80,7 @@ Settings::Settings(){
         try {
             numParticles = boost::lexical_cast<int>(numParticleString);
         }
-        catch(...) {
+        catch(...){
             errorMessage = "Particle number is an int";
             return;
         }
@@ -88,7 +88,7 @@ Settings::Settings(){
         try {
             numThreads = boost::lexical_cast<int>(numThreadString);
         }
-        catch(...) {
+        catch(...){
             errorMessage = "Thread number is an int";
             return;
         }
@@ -96,7 +96,7 @@ Settings::Settings(){
         try {
             numRates = boost::lexical_cast<int>(numRatesString);
         }
-        catch(...) {
+        catch(...){
             errorMessage = "Rate number is an int";
             return;
         }
@@ -104,7 +104,7 @@ Settings::Settings(){
         try {
             rejuvenationIterations = boost::lexical_cast<int>(rejuvenationString);
         }
-        catch(...) {
+        catch(...){
             errorMessage = "Rejuvenation iterations is an int";
             return;
         }
@@ -227,7 +227,7 @@ Settings::Settings(int argc, char* argv[]){
             try {
                 numRates = boost::lexical_cast<int>(arg);
             }
-            catch(...) {
+            catch(...){
                 usage();
                 std::cout << "Error: -G is supposed to be an integer representing the number of discretized rate categories." << std::endl;
                 std::exit(1);
@@ -237,7 +237,7 @@ Settings::Settings(int argc, char* argv[]){
             try {
                 numThreads = boost::lexical_cast<int>(arg);
             }
-            catch(...) {
+            catch(...){
                 usage();
                 std::cout << "Error: -t is supposed to be an integer representing the number of threads." << std::endl;
                 std::exit(1);
@@ -247,7 +247,7 @@ Settings::Settings(int argc, char* argv[]){
             try {
                 numParticles = boost::lexical_cast<int>(arg);
             }
-            catch(...) {
+            catch(...){
                 usage();
                 std::cout << "Error: -p is supposed to be an integer representing the number of particles." << std::endl;
                 std::exit(1);
@@ -257,7 +257,7 @@ Settings::Settings(int argc, char* argv[]){
             try {
                 rejuvenationIterations = boost::lexical_cast<int>(arg);
             }
-            catch(...) {
+            catch(...){
                 usage();
                 std::cout << "Error: -r is supposed to be an integer representing the number of rejuvenation iterations." << std::endl;
                 std::exit(1);
@@ -267,7 +267,7 @@ Settings::Settings(int argc, char* argv[]){
             try {
                 seed = boost::lexical_cast<unsigned int>(arg);
             }
-            catch(...) {
+            catch(...){
                 usage();
                 std::cout << "Error: -s is supposed to be a numeric (unsigned int) seed." << std::endl;
                 std::exit(1);

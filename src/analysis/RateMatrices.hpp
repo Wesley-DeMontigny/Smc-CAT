@@ -4,7 +4,7 @@
 #include <mutex>
 
 namespace RateMatrices {
-    inline const Eigen::Matrix<double, 20, 20>& constructLG() {
+    inline const Eigen::Matrix<double, 20, 20>& constructLG(){
         static Eigen::Matrix<double, 20, 20> m{};
         static std::once_flag callFlag{};
 
@@ -94,7 +94,7 @@ namespace RateMatrices {
         return m;
     }
 
-    inline const std::array<std::pair<int, int>, 190>& contructLowerTriangleCoordinates() {
+    inline const std::array<std::pair<int, int>, 190>& contructLowerTriangleCoordinates(){
         static std::array<std::pair<int, int>, 190> coords{};
         static std::once_flag callFlag{};
 

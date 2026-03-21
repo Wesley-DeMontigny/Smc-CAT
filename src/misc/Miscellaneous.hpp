@@ -19,20 +19,31 @@
 /**
  * @brief Return the bins for a discretized gamma function
  */
-inline void discretizeGamma(std::vector<double>& outVec, double shape, int num) {
+inline void discretizeGamma(std::vector<double>& outVec, double shape, int num){
     boost::math::gamma_distribution<double> gammaDist(shape, 1.0/shape);
     outVec.clear();
     outVec.reserve(num);
 
-    double interval = 1.0 / (2.0 * num);
-    for (int i = 0; i < num; ++i) {
-        outVec.push_back(boost::math::quantile(gammaDist, (i * 2.0 + 1.0) * interval));
+    double binWidth = 1.0 / static_cast<double>(num);
+    auto incompleteMoment = [&](double x){
+        if(!std::isfinite(x)){
+            return 1.0;
+        }
+        return boost::math::gamma_p(shape + 1.0, shape * x);
+    };
+
+    for (int i = 0; i < num; ++i){
+        double lowerProb = i * binWidth;
+        double upperProb = (i + 1) * binWidth;
+        double lowerBound = (i == 0) ? 0.0 : boost::math::quantile(gammaDist, lowerProb);
+        double upperBound = (i + 1 == num) ? INFINITY : boost::math::quantile(gammaDist, upperProb);
+        double binMean = (incompleteMoment(upperBound) - incompleteMoment(lowerBound)) / binWidth;
+        outVec.push_back(binMean);
     }
 
-    // Rescale categories
-    double factor = num / std::accumulate(outVec.begin(), outVec.end(), 0.0);
-    for (auto& v : outVec) {
-        v *= factor;
+    const double meanRate = std::accumulate(outVec.begin(), outVec.end(), 0.0) / static_cast<double>(num);
+    for(auto& rate : outVec){
+        rate /= meanRate;
     }
 }
 
@@ -118,10 +129,10 @@ inline void computeSplitPosteriors(std::unordered_map<boost::dynamic_bitset<>, d
     splitPosteriorProbabilities.clear();
     for(int n = 0; n < particleSplits.size(); n++){
         for(boost::dynamic_bitset<> split : particleSplits[n]){
-            if (splitPosteriorProbabilities.count(split)) {
+            if(splitPosteriorProbabilities.count(split)){
                 splitPosteriorProbabilities[split] += normalizedWeights[n];
             }
-            else {
+            else{
                 splitPosteriorProbabilities[split] = normalizedWeights[n];
             }
         }
@@ -139,10 +150,10 @@ inline void computeSplitPosteriors(std::unordered_map<boost::dynamic_bitset<>, d
     double weight = 1.0 / static_cast<double>(assignments.size());
     for(const auto& n : assignments){
         for(boost::dynamic_bitset<> split : particleSplits[n]){
-            if (splitPosteriorProbabilities.count(split)) {
+            if(splitPosteriorProbabilities.count(split)){
                 splitPosteriorProbabilities[split] += weight;
             }
-            else {
+            else{
                 splitPosteriorProbabilities[split] = weight;
             }
         }

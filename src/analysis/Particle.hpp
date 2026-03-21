@@ -1,6 +1,6 @@
 #ifndef PARTICLE_HPP
 #define PARTICLE_HPP
-#include "core/Miscellaneous.hpp"
+#include "misc/Miscellaneous.hpp"
 #include "TransitionProbabilityClass.hpp"
 #include "Tree.hpp"
 #include <boost/dynamic_bitset.hpp>
@@ -62,11 +62,11 @@ class Particle {
         double treeMove(const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosterior);
         boost::random::mt19937& getRng(){ return rng; }
         Eigen::Vector<double, 190> getBaseMatrix() const { return *currentBaseMatrix; }
-        int getNumCategories() { return currentTransitionProbabilityClasses.size(); }
+        int getNumCategories(){ return currentTransitionProbabilityClasses.size(); }
         int getNumNodes() const { return numNodes; }
         int getNumRates() const { return numRates; }
-        std::set<boost::dynamic_bitset<>> getSplitSet() { return currentPhylogeny.getSplitSet(); }
-        std::unordered_map<boost::dynamic_bitset<>, double> getSplitBranchMap() { return currentPhylogeny.getSplitBranchMap(); }
+        std::set<boost::dynamic_bitset<>> getSplitSet(){ return currentPhylogeny.getSplitSet(); }
+        std::unordered_map<boost::dynamic_bitset<>, double> getSplitBranchMap(){ return currentPhylogeny.getSplitBranchMap(); }
         std::string getNewick() const { return currentPhylogeny.generateNewick(); }
         std::string getNewick(const std::unordered_map<boost::dynamic_bitset<>, double>& splitPosteriorProbabilities) const { return currentPhylogeny.generateNewick(splitPosteriorProbabilities); }
         std::vector<double> getRates() const { return currentRates; }
@@ -79,7 +79,7 @@ class Particle {
         void refreshLikelihood(bool forceUpdate = false); // Refreshes the likelihood and stores it in the currentLnLikelihood variable
         void reject();
         void setAssignments(std::vector<int>& assignments);
-        void setInvariance(double i) { currentPInvar = i; }
+        void setInvariance(double i){ currentPInvar = i; }
         void writeToSerialized(SerializedParticle& sp);
 
         std::array<int, 10> moveCount;
@@ -88,7 +88,7 @@ class Particle {
         double shapeDelta = 1.0; // Delta to scale the shape of the gamma distribution
         double scaleDelta = 1.0; // Delta to scale an individual branch length
         double subtreeScaleDelta = 1.0; // Delta to scale whole subtrees
-        double stationaryDelta = 0.25; // Delta parameter for proposals on the stationary
+        double stationaryDelta = 0.05; // Delta parameter for proposals on the stationary. This parameter can be EXTREMELY problematic early on when the geometry of the tempered posterior can't prevent pathological values.
         double rateMatrixDelta = 0.25; // Delta parameter for proposals on the rate matrix
         Eigen::MatrixXd rateMatrixCholesky = Eigen::MatrixXd::Identity(190, 190) * 0.5; // The Cholesky factor for entries of the rate matrix
         double invarAlpha = 100.0; // Concentration parameter for the beta simplex proposals on invar

@@ -2,9 +2,9 @@
 #include "analysis/Particle.hpp"
 #include "analysis/RateMatrices.hpp"
 #include "analysis/SerializedParticle.hpp"
-#include "core/Alignment.hpp"
-#include "core/Miscellaneous.hpp"
-#include "core/Settings.hpp"
+#include "misc/Alignment.hpp"
+#include "misc/Miscellaneous.hpp"
+#include "misc/Settings.hpp"
 #include <boost/accumulators/accumulators.hpp>
 #include <boost/accumulators/statistics.hpp>
 #include <boost/accumulators/statistics/weighted_mean.hpp>
@@ -110,7 +110,7 @@ int main(int argc, char* argv[]){
     std::chrono::steady_clock::time_point preAnalysis = std::chrono::steady_clock::now();
 
     particles.reserve(settings.numThreads);
-    for (int t = 0; t < settings.numThreads; t++) {
+    for (int t = 0; t < settings.numThreads; t++){
         particles.emplace_back(settings.seed + t, aln, settings.numRates, settings.invar, settings.lg, settings.cat);
     }
 
@@ -189,7 +189,7 @@ int main(int argc, char* argv[]){
                     ruler += step;
                 } 
                 else{
-                    if (++k >= settings.numParticles) { k = settings.numParticles - 1; cumulative = 1.0; }
+                    if(++k >= settings.numParticles){ k = settings.numParticles - 1; cumulative = 1.0; }
                     else cumulative += normalizedWeights[k];
                 }
             }
@@ -213,7 +213,7 @@ int main(int argc, char* argv[]){
             double scaleDelta = 1.0;
 
             VarAcc stationaryVar{};
-            double stationaryDelta = 1.0;
+            double stationaryDelta = 0.05; // For stability we need to keep this somewhat
 
             double pInvarMean = 0.0;
 
@@ -265,7 +265,7 @@ int main(int argc, char* argv[]){
                 }
 
                 Eigen::LLT<Eigen::MatrixXd> chol(rateMatrixCovariance);
-                if(chol.info() != Eigen::Success) {
+                if(chol.info() != Eigen::Success){
                     std::cout << rateMatrixCovariance << std::endl;
                     std::cout << "Failed to Form Cholesky Factors for Rate Matrix Covariance!" << std::endl;
                     std::exit(1);
@@ -276,13 +276,13 @@ int main(int argc, char* argv[]){
             pInvarMean /= static_cast<double>(assignments.size());
             shapeDelta *= boost::accumulators::variance(rateVar);
             scaleDelta *= boost::accumulators::variance(branchVar);
-            stationaryDelta *= boost::accumulators::variance(stationaryVar);
+            stationaryDelta *= std::sqrt(std::max(boost::accumulators::variance(stationaryVar), 1e-12));
 
             for(auto& p : particles){
                 p.shapeDelta = std::max(shapeDelta, 0.01);
                 p.scaleDelta = std::max(scaleDelta, 0.01);
                 p.subtreeScaleDelta = std::max(scaleDelta, 0.01);
-                p.stationaryDelta = std::max(stationaryDelta, 0.01);
+                p.stationaryDelta = std::clamp(stationaryDelta, 0.005, 0.08);
                 p.invarAlpha = pInvarMean * 0.5;
                 if(!settings.lg){
                     p.rateMatrixDelta = std::max(shrinkageDiagonal, 0.01);
@@ -300,7 +300,7 @@ int main(int argc, char* argv[]){
                 p.copyFromSerialized(currentSerializedParticles[particleID]);
 
                 mcmc(p, settings.rejuvenationIterations, currentTemp);
-                if(unif(rng) < settings.alg8Probability && settings.cat){ // Update the CRP only for a fraction of particles
+                if(boost::random::uniform_01<double>{}(p.getRng()) < settings.alg8Probability && settings.cat){ // Update the CRP only for a fraction of particles
                     p.gibbsPartitionMove(currentTemp);
                     p.refreshLikelihood(true);
                 }
@@ -382,7 +382,7 @@ int main(int argc, char* argv[]){
     for(auto& s : selectedSplits){
         branchWeightedMeans.emplace(s, Acc{});
     }
-    for (int n = 0; n < settings.numParticles; n++) {
+    for (int n = 0; n < settings.numParticles; n++){
         Particle& p = particles[0];
         p.copyFromSerialized(currentSerializedParticles[n]);
         std::unordered_map<boost::dynamic_bitset<>, double> sbMap = p.getSplitBranchMap();
