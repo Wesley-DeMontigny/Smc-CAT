@@ -1,4 +1,5 @@
 # About
+![image](interface.png)
 Smc-CAT is a Sequential Monte Carlo (SMC) sampler for the computationally intensive phylogenetic CAT model. This model is a Dirichlet process mixture of phylogenetic Markov chains - each with a different stationary distribution. The goal of this software was to implement the CAT model in a sampling algorithm that is efficient and embarrasingly parallel to improve the computational problems associated with the model. Unlike Markov Chain Monte Carlo, SMC is easily parallelizable - although when it comes to phylogenetic models this results in pretty "heavy" particles.
 
 **STATUS**: This is an actively developed research prototype. Some features may be incomplete or unstable, and the API is subject to change.
@@ -50,5 +51,3 @@ smccat -a <fasta_file> -GTR
 
 - `-C`  
   Use the CAT mixture model.
-
-![image](interface.png)
