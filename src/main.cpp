@@ -13,6 +13,7 @@
 #include <boost/random/mersenne_twister.hpp>
 #include <boost/random/uniform_01.hpp>
 #include <chrono>
+#include <algorithm>
 #include <iomanip>
 #include <iostream>
 #include <omp.h>
@@ -341,6 +342,13 @@ int main(int argc, char* argv[]){
         particleSplits
     );
 
+    auto bestWeight = std::max_element(normalizedWeights.begin(), normalizedWeights.end());
+    int bestIndex = std::distance(normalizedWeights.begin(), bestWeight);
+    auto mapParticle = currentSerializedParticles[bestIndex];
+    Tree mapTree = Tree(mapParticle.newick, aln.getTaxaNames());
+    std::string mapNewick = mapTree.generateNewick(splitPosteriorProbabilities);
+    std::cout << "MAP Tree: \n" << mapNewick << std::endl;
+
     std::cout << "Computing the Greedy Consensus Tree..." << std::endl;
     std::vector<std::pair<boost::dynamic_bitset<>, double>> sortedSplits(
         splitPosteriorProbabilities.begin(),
@@ -402,7 +410,7 @@ int main(int argc, char* argv[]){
 
     Tree consensusTree(buildInputs, aln.getTaxaNames());
     std::string consensusNewick = consensusTree.generateNewick(splitPosteriorProbabilities);
-    std::cout << consensusNewick << std::endl;
+    std::cout << "Greedy Consensus Tree: \n" << consensusNewick << std::endl;
 
     std::cout << "Writing Split File..." << std::endl;
     std::sort(sortedSplits.begin(), sortedSplits.end(), [](auto& a, auto& b){
