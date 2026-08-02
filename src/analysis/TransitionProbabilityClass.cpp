@@ -168,7 +168,9 @@ double TransitionProbabilityClass::lnPrior(){
     }
     lnDirichletKernel += (dirichletAlpha - 1.0) * std::log(remainingStick);
 
-    return lnDirichletKernel + lnJ;
+    double lnDirichletZ = std::lgamma(20.0 * dirichletAlpha) - 20.0 * std::lgamma(dirichletAlpha);
+
+    return lnDirichletZ + lnDirichletKernel + lnJ;
 }
 
 void TransitionProbabilityClass::normalizeStationary(){
