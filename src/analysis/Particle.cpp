@@ -437,6 +437,7 @@ void Particle::reject(){
         for(int i = 0; i < currentTransitionProbabilityClasses.size(); i++){
             if(currentTransitionProbabilityClasses[i].updated){
                 currentTransitionProbabilityClasses[i] = oldTransitionProbabilityClasses[i];
+                currentTransitionProbabilityClasses[i].updated = false; // This should always be true because the old class should not have an updated flag, but we enforce it anyways.
             }
         }
     }
@@ -539,7 +540,6 @@ void Particle::refreshLikelihood(bool forceUpdate){
                         c.recomputeTransitionProbs(n->id, n->branchLength, r, currentRates[r]);
                     }
                 }
-                c.updated = false;
             }
         }
     }
