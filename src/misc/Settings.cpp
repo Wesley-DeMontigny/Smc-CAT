@@ -222,7 +222,10 @@ Settings::Settings(int argc, char* argv[]){
             usage();
             std::exit(0);
         }
-        else if(arg == "-G" || arg == "-t" || arg == "-p" || arg == "-r" || arg == "-s" || arg == "-a" || arg == "-C"){}
+        else if(arg == "-C"){
+            cat = true;
+        }
+        else if(arg == "-G" || arg == "-t" || arg == "-p" || arg == "-r" || arg == "-s" || arg == "-a"){}
         else if(lastArgument == "-G"){
             try {
                 numRates = boost::lexical_cast<int>(arg);
